@@ -27,148 +27,269 @@
         </div>
     </header>
     <div class="editor-workspace editor-workspace--split play-shell">
-    <aside class="play-sidebar" aria-label="Runtime">
-        <section class="play-panel">
-            <h2>Runtime</h2>
-            <div class="play-stats">
-                <div><span>FPS</span> <span id="stat-fps">—</span></div>
-                <div><span>UPS</span> <span id="stat-ups">—</span></div>
-                <div><span>RTT</span> <span id="stat-rtt">—</span></div>
-                <div><span>Tick</span> <span id="stat-tick">—</span></div>
+    <aside class="am-sidebar game-sidebar play-sidebar" aria-label="Runtime">
+        <div class="am-sidebar-body">
+            <div class="am-sidebar-section">
+                <h2 class="am-sidebar-title">Runtime</h2>
+                <div class="game-stats play-stats">
+                    <div><span class="label-retro">FPS</span> <span id="stat-fps" class="game-stat-value">—</span></div>
+                    <div><span class="label-retro">UPS</span> <span id="stat-ups" class="game-stat-value">—</span></div>
+                    <div><span class="label-retro">RTT</span> <span id="stat-rtt" class="game-stat-value">—</span></div>
+                    <div><span class="label-retro">Tick</span> <span id="stat-tick" class="game-stat-value">—</span></div>
+                </div>
             </div>
-        </section>
-        <section class="play-panel">
-            <h2>Mouse</h2>
-            <label class="play-label" for="mouse-mode">Control</label>
-            <select id="mouse-mode">
-                <option value="0">Regular</option>
-                <option value="1" selected>Classic</option>
-                <option value="2">Smart Left</option>
-            </select>
-            <div id="loot-mode-wrap">
-                <label class="play-label" for="loot-mode">Loot</label>
-                <select id="loot-mode">
-                    <option value="0" selected>Loot: Right</option>
-                    <option value="1">Loot: SHIFT+Right</option>
-                    <option value="2">Loot: Left</option>
-                </select>
+            <div class="am-sidebar-section">
+                <h2 class="am-sidebar-title">Controls</h2>
+                <div class="card card-retro p-2 mb-2">
+                    <label class="label-retro" for="mouse-mode">Control</label>
+                    <select class="form-select form-select-retro form-select-sm w-100 mb-2" id="mouse-mode">
+                        <option value="0">Regular</option>
+                        <option value="1" selected>Classic</option>
+                        <option value="2">Smart Left</option>
+                    </select>
+                    <div id="loot-mode-wrap" class="mb-2">
+                        <label class="label-retro" for="loot-mode">Loot</label>
+                        <select class="form-select form-select-retro form-select-sm w-100" id="loot-mode">
+                            <option value="0" selected>Loot: Right</option>
+                            <option value="1">Loot: SHIFT+Right</option>
+                            <option value="2">Loot: Left</option>
+                        </select>
+                    </div>
+                    <div class="form-check form-switch mb-1" id="talk-right-wrap" hidden>
+                        <input class="form-check-input" type="checkbox" id="talk-right" style="cursor: pointer;">
+                        <label class="form-check-label label-retro mb-0 ms-1" for="talk-right">Talk on right-click</label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="auto-chase" style="cursor: pointer;">
+                        <label class="form-check-label label-retro mb-0 ms-1" for="auto-chase">Auto Chase</label>
+                    </div>
+                    <div class="text-muted text-xxs mt-1">
+                        <small class="d-block"><i class="fa-solid fa-mouse"></i> RMB default · Ctrl+click menu</small>
+                        <small class="d-block"><i class="fa-solid fa-keyboard"></i> Arrows walk · U ladder · Space cycle</small>
+                    </div>
+                </div>
             </div>
-            <label id="talk-right-wrap" class="play-check" hidden>
-                <input type="checkbox" id="talk-right"> Talk on right-click
-            </label>
-            <label class="play-check">
-                <input type="checkbox" id="auto-chase"> Auto Chase
-            </label>
-            <p class="play-hint">RMB default action. Ctrl+click menu. Arrows walk. U uses a ladder. Space cycles targets.</p>
-        </section>
-        <section class="play-panel play-sidebar-log">
-            <h2>Log</h2>
-            <div id="log" class="log" role="log"></div>
-        </section>
-        <div class="play-sidebar-footer">
-            <button type="button" id="leave-side" class="ghost">Log out</button>
+            <div class="am-sidebar-section play-sidebar-log">
+                <h2 class="am-sidebar-title">Log</h2>
+                <div id="log" class="log" role="log"></div>
+            </div>
+        </div>
+        <div class="game-sidebar-footer play-sidebar-footer">
+            <button type="button" class="btn btn-retro btn-retro-cyan w-100 mb-1" id="openEngineSettingsBtn" title="Character sheet & settings"><i class="fa-solid fa-wrench"></i> Settings</button>
+            <button type="button" class="btn btn-retro btn-danger w-100 mb-1" id="leave-side" title="Log out and return to character selection"><i class="fa-solid fa-sign-out-alt"></i> Log out</button>
         </div>
     </aside>
-    <main class="play-main">
-        <p id="status" class="status">Connecting…</p>
-        <div class="play-canvas-wrap canvas-container" id="gameCanvasContainer">
-            <button type="button" id="fullscreen-btn" class="fullscreen-btn" title="Full Screen" aria-label="Full Screen">⛶</button>
-            <canvas id="world" width="480" height="352" tabindex="0" aria-label="World view"></canvas>
-            <div id="fct" class="fct" hidden></div>
-            <div id="death-overlay" class="death-overlay" hidden>
-                <p>You are dead.</p>
-                <p class="play-hint">Respawning…</p>
+    <main class="game-main play-main">
+        <p id="status" class="status mb-1">Connecting…</p>
+        <div class="game-canvas-wrap canvas-container action-bars-layout play-canvas-wrap" id="gameCanvasContainer">
+            <div id="actionBarDockTop" class="action-bar-dock action-bar-dock--horizontal action-bar-dock--top"></div>
+            <div class="canvas-middle-row">
+                <div id="actionBarDockLeft" class="action-bar-dock action-bar-dock--vertical action-bar-dock--left"></div>
+                <div class="canvas-center-wrapper" id="canvasCenterWrapper">
+                    <button type="button" id="fullscreen-btn" class="fullscreen-btn" title="Full Screen" aria-label="Full Screen">
+                        <svg viewBox="0 0 24 24" id="enterFullscreenIcon" aria-hidden="true">
+                            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                        </svg>
+                        <svg viewBox="0 0 24 24" id="exitFullscreenIcon" style="display: none;" aria-hidden="true">
+                            <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+                        </svg>
+                    </button>
+                    <canvas id="world" width="480" height="352" tabindex="0" aria-label="World view"></canvas>
+                    <div id="fct" class="fct" hidden></div>
+                    <div id="death-overlay" class="death-overlay" hidden>
+                        <p>You are dead.</p>
+                        <p class="play-hint">Respawning…</p>
+                    </div>
+                    <div id="ctx-menu" class="ctx-menu" hidden></div>
+                </div>
+                <div id="actionBarDockRight" class="action-bar-dock action-bar-dock--vertical action-bar-dock--right"></div>
             </div>
-            <div id="ctx-menu" class="ctx-menu" hidden></div>
+            <div id="actionBarDockBottom" class="action-bar-dock action-bar-dock--horizontal action-bar-dock--bottom"></div>
         </div>
-        <div id="npc-dialog" class="float-panel" hidden>
-            <header>
-                <strong id="dialog-title">Talk</strong>
-                <button type="button" class="panel-close" id="dialog-close" aria-label="Close dialog">×</button>
-            </header>
-            <div id="dialog-body" class="float-body"></div>
+        <div id="npc-dialog" class="float-panel inv-float-panel inv-npc-dialog-panel" hidden>
+            <div class="am-sidebar-title-row panel-title-bar">
+                <strong id="dialog-title" class="am-sidebar-title mb-0">Talk</strong>
+                <button type="button" class="panel-close-btn panel-close" id="dialog-close" aria-label="Close dialog">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div id="dialog-body" class="float-body inv-npc-dialog-body"></div>
         </div>
-        <div id="npc-shop" class="float-panel" hidden>
-            <header>
-                <strong id="shop-title">Trade</strong>
-                <button type="button" class="panel-close" id="shop-close" aria-label="Close shop">×</button>
-            </header>
-            <div id="shop-body" class="float-body"></div>
+        <div id="npc-shop" class="float-panel inv-float-panel inv-npc-dialog-panel is-shop" hidden>
+            <div class="am-sidebar-title-row panel-title-bar">
+                <strong id="shop-title" class="am-sidebar-title mb-0">Trade</strong>
+                <button type="button" class="panel-close-btn panel-close" id="shop-close" aria-label="Close shop">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div id="shop-body" class="float-body inv-npc-dialog-body"></div>
         </div>
-        <div id="loot-panel" class="float-panel" hidden>
-            <header>
-                <strong id="loot-title">Loot</strong>
-                <button type="button" class="panel-close" id="loot-close" aria-label="Close loot">×</button>
-            </header>
+        <div id="loot-panel" class="float-panel inv-float-panel" hidden>
+            <div class="am-sidebar-title-row panel-title-bar">
+                <strong id="loot-title" class="am-sidebar-title mb-0">Loot</strong>
+                <button type="button" class="panel-close-btn panel-close" id="loot-close" aria-label="Close loot">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
             <div id="loot-body" class="float-body"></div>
         </div>
-        <section class="play-live" aria-label="Live stats">
-            <div class="play-live-grid">
-                <div><span>Floor</span> <span id="live-floor">—</span></div>
-                <div><span>HP</span> <span id="live-hp">—</span></div>
-                <div><span>MP</span> <span id="live-mp">—</span></div>
-                <div><span>Exp</span> <span id="live-exp">—</span></div>
-                <div><span>Mobs</span> <span id="live-mobs">—</span></div>
-                <div><span>Pos</span> <span id="live-pos">—</span></div>
-            </div>
-        </section>
+        <div class="game-below-canvas">
+            <section class="game-live-section play-live" aria-label="Live stats">
+                <div class="am-sidebar-title-row">
+                    <h2 class="am-sidebar-title mb-0">Live stats</h2>
+                </div>
+                <div class="game-live-tiles">
+                    <div class="game-live-tile game-live-tile--stats">
+                        <div class="game-stats game-stats--live play-live-grid">
+                            <div class="live-stat-row"><span class="label-retro">Floor</span> <span id="live-floor" class="game-stat-value">—</span></div>
+                            <div class="live-stat-row"><span class="label-retro">HP</span> <span id="live-hp" class="game-stat-value">—</span></div>
+                            <div class="live-stat-row"><span class="label-retro">MP</span> <span id="live-mp" class="game-stat-value">—</span></div>
+                            <div class="live-stat-row"><span class="label-retro">Exp</span> <span id="live-exp" class="game-stat-value">—</span></div>
+                            <div class="live-stat-row"><span class="label-retro">Mobs</span> <span id="live-mobs" class="game-stat-value">—</span></div>
+                            <div class="live-stat-row"><span class="label-retro">Pos</span> <span id="live-pos" class="game-stat-value">—</span></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
     </main>
-    <aside class="play-inventory" aria-label="Equipment and backpack">
-        <section class="game-equipment-panel" aria-label="Equipment">
-            <div class="panel-title-row">
-                <h2>Equipment</h2>
-                <button type="button" class="ghost btn-xs" id="equipment-details">Details</button>
-            </div>
-            <div class="equipment-card" id="activeEquipmentCard">
-                <div class="slot-item" style="left:1px;top:19px;" data-slot="amulet" title="Amulet"><span class="slot-placeholder">◆</span></div>
-                <div class="slot-item" style="left:37px;top:1px;" data-slot="head" title="Helmet"><span class="slot-placeholder">H</span></div>
-                <div class="slot-item" style="left:73px;top:19px;" data-slot="backpack" title="Backpack"><span class="slot-placeholder">B</span></div>
-                <div class="slot-item" style="left:1px;top:55px;" data-slot="weapon" title="Weapon"><span class="slot-placeholder">W</span></div>
-                <div class="slot-item" style="left:37px;top:37px;" data-slot="chest" title="Armor"><span class="slot-placeholder">A</span></div>
-                <div class="slot-item" style="left:73px;top:55px;" data-slot="shield" title="Shield"><span class="slot-placeholder">S</span></div>
-                <div class="slot-item" style="left:1px;top:91px;" data-slot="ring" title="Ring"><span class="slot-placeholder">R</span></div>
-                <div class="slot-item" style="left:37px;top:73px;" data-slot="legs" title="Legs"><span class="slot-placeholder">L</span></div>
-                <div class="slot-item" style="left:73px;top:91px;" data-slot="light" title="Light"><span class="slot-placeholder">*</span></div>
-                <div class="slot-item" style="left:37px;top:109px;" data-slot="boots" title="Boots"><span class="slot-placeholder">F</span></div>
-                <div class="soul" style="left:1px;top:127px;"><p>Soul:</p><p class="total" id="activeEqSoul">—</p></div>
-                <div class="capacity" style="left:73px;top:127px;"><p>Cap:</p><p class="total" id="activeEqCap">—</p></div>
-            </div>
-        </section>
-        <section class="play-panel" data-panel-id="backpack" aria-label="Backpack">
-            <h2>Backpack</h2>
-            <div class="backpack-grid" id="backpackGrid"></div>
-        </section>
-        <section class="play-panel" id="openBagPanel" data-panel-id="open-bag" aria-label="Open bag" hidden>
-            <div class="panel-title-row">
-                <h2 id="openBagTitle">Bag</h2>
-                <button type="button" class="ghost btn-xs" id="openBagClose">Close</button>
-            </div>
-            <div class="backpack-grid" id="openBagGrid"></div>
-        </section>
-        <section class="play-panel" data-panel-id="combat" aria-label="Combat">
-            <div class="panel-title-row">
-                <h2>Combat</h2>
-                <select id="combat-sort" title="Sort combat list" aria-label="Sort combat list">
-                    <option value="display_time_asc">Time ASC</option>
-                    <option value="display_time_desc">Time DESC</option>
-                    <option value="distance_asc">Dist ASC</option>
-                    <option value="distance_desc">Dist DESC</option>
-                    <option value="hp_percent_asc">% HP ASC</option>
-                    <option value="hp_percent_desc">% HP DESC</option>
-                    <option value="name_asc">Name ASC</option>
-                    <option value="name_desc">Name DESC</option>
-                </select>
-            </div>
-            <div id="combatCreaturesList" class="entity-list">
-                <p class="muted">No creatures in combat</p>
-            </div>
-        </section>
-        <section class="play-panel" data-panel-id="skills" aria-label="Skills">
-            <h2>Skills</h2>
-            <div id="skillsPanelList" class="skills-list">
-                <p class="muted">No character</p>
-            </div>
-        </section>
+    <aside class="game-inventory-panel play-inventory" aria-label="Equipment and backpack">
+        <div class="am-sidebar-body">
+            <section class="game-equipment-panel" aria-label="Equipment">
+                <div class="am-sidebar-title-row panel-title-row">
+                    <h2 class="am-sidebar-title mb-0">Equipment</h2>
+                    <button type="button" class="btn btn-xs btn-outline-secondary party-details-btn ghost" id="equipment-details" title="Character details">Details</button>
+                </div>
+                <div class="equipment-card-container">
+                    <div class="equipment-card" id="activeEquipmentCard">
+                        <div class="slot-item" style="left:1px;top:19px;" data-slot="amulet" title="Amulet"><span class="slot-placeholder">◆</span></div>
+                        <div class="slot-item" style="left:37px;top:1px;" data-slot="head" title="Helmet"><span class="slot-placeholder">H</span></div>
+                        <div class="slot-item" style="left:73px;top:19px;" data-slot="backpack" title="Backpack"><span class="slot-placeholder">B</span></div>
+                        <div class="slot-item" style="left:1px;top:55px;" data-slot="weapon" title="Weapon"><span class="slot-placeholder">W</span></div>
+                        <div class="slot-item" style="left:37px;top:37px;" data-slot="chest" title="Armor"><span class="slot-placeholder">A</span></div>
+                        <div class="slot-item" style="left:73px;top:55px;" data-slot="shield" title="Shield"><span class="slot-placeholder">S</span></div>
+                        <div class="slot-item" style="left:1px;top:91px;" data-slot="ring" title="Ring"><span class="slot-placeholder">R</span></div>
+                        <div class="slot-item" style="left:37px;top:73px;" data-slot="legs" title="Legs"><span class="slot-placeholder">L</span></div>
+                        <div class="slot-item" style="left:73px;top:91px;" data-slot="light" title="Light"><span class="slot-placeholder">*</span></div>
+                        <div class="slot-item" style="left:37px;top:109px;" data-slot="boots" title="Boots"><span class="slot-placeholder">F</span></div>
+                        <div class="soul" style="left:1px;top:127px;"><p>Soul:</p><p class="total" id="activeEqSoul">—</p></div>
+                        <div class="capacity" style="left:73px;top:127px;"><p>Cap:</p><p class="total" id="activeEqCap">—</p></div>
+                    </div>
+                </div>
+            </section>
+            <section class="game-backpack-panel panel-collapsible-section play-panel" data-panel-id="backpack" aria-label="Backpack">
+                <div class="am-sidebar-title-row panel-title-bar">
+                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
+                            <h2 class="am-sidebar-title mb-0">Backpack</h2>
+                        </div>
+                    </div>
+                    <div class="panel-title-actions">
+                        <button type="button" class="panel-close-btn" aria-label="Close backpack" title="Close Backpack">
+                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-collapsible-content">
+                    <div class="backpack-grid-scroll panel-body-scroll" id="backpackScroll">
+                        <div class="backpack-grid" id="backpackGrid"></div>
+                    </div>
+                </div>
+                <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
+            </section>
+            <section class="play-panel panel-collapsible-section" id="openBagPanel" data-panel-id="open-bag" aria-label="Open bag" hidden>
+                <div class="am-sidebar-title-row panel-title-bar">
+                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0">
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
+                            <h2 id="openBagTitle" class="am-sidebar-title mb-0">Bag</h2>
+                        </div>
+                    </div>
+                    <div class="panel-title-actions">
+                        <button type="button" class="panel-close-btn ghost btn-xs" id="openBagClose" aria-label="Close bag" title="Close bag">
+                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-collapsible-content">
+                    <div class="backpack-grid-scroll panel-body-scroll">
+                        <div class="backpack-grid" id="openBagGrid"></div>
+                    </div>
+                </div>
+            </section>
+            <section class="game-combat-panel panel-collapsible-section play-panel" data-panel-id="combat" aria-label="Combat">
+                <div class="am-sidebar-title-row panel-title-bar">
+                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
+                            <h2 class="am-sidebar-title mb-0">Combat</h2>
+                        </div>
+                    </div>
+                    <div class="panel-title-actions d-flex align-items-center gap-1">
+                        <div class="combat-sort-container position-relative">
+                            <button type="button" class="btn btn-xs btn-outline-secondary party-details-btn combat-sort-btn" id="combatSortBtn" title="Sort options" aria-label="Sort options">
+                                <i class="fa-solid fa-arrow-down-short-wide"></i>
+                            </button>
+                            <div id="combatSortDropdown" class="combat-sort-dropdown-menu" hidden>
+                                <div class="combat-sort-item active" data-sort="display_time_asc">Time - ASC</div>
+                                <div class="combat-sort-item" data-sort="display_time_desc">Time - DESC</div>
+                                <div class="combat-sort-item" data-sort="distance_asc">Distance - ASC</div>
+                                <div class="combat-sort-item" data-sort="distance_desc">Distance - DESC</div>
+                                <div class="combat-sort-item" data-sort="hp_percent_asc">% HP - ASC</div>
+                                <div class="combat-sort-item" data-sort="hp_percent_desc">% HP - DESC</div>
+                                <div class="combat-sort-item" data-sort="name_asc">Name - ASC</div>
+                                <div class="combat-sort-item" data-sort="name_desc">Name - DESC</div>
+                            </div>
+                        </div>
+                        <select id="combat-sort" class="d-none" aria-label="Sort combat list">
+                            <option value="display_time_asc">Time ASC</option>
+                            <option value="display_time_desc">Time DESC</option>
+                            <option value="distance_asc">Dist ASC</option>
+                            <option value="distance_desc">Dist DESC</option>
+                            <option value="hp_percent_asc">% HP ASC</option>
+                            <option value="hp_percent_desc">% HP DESC</option>
+                            <option value="name_asc">Name ASC</option>
+                            <option value="name_desc">Name DESC</option>
+                        </select>
+                        <button type="button" class="panel-close-btn" aria-label="Close combat" title="Close Combat">
+                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-collapsible-content">
+                    <div class="entity-panel-list-scroll panel-body-scroll">
+                        <div id="combatCreaturesList" class="entity-panel-list entity-list" role="list">
+                            <p class="text-muted small mb-0 p-1">No creatures in combat</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
+            </section>
+            <section class="game-skills-panel panel-collapsible-section play-panel" data-panel-id="skills" aria-label="Skills">
+                <div class="am-sidebar-title-row panel-title-bar">
+                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
+                            <h2 class="am-sidebar-title mb-0">Skills</h2>
+                        </div>
+                    </div>
+                    <div class="panel-title-actions">
+                        <button type="button" class="panel-close-btn" aria-label="Close skills" title="Close Skills">
+                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-collapsible-content">
+                    <div class="skills-panel-scroll panel-body-scroll" id="skillsPanelScroll">
+                        <div id="skillsPanelList" class="skills-panel-list skills-list">
+                            <p class="text-muted small mb-0 p-1">No character</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
+            </section>
+        </div>
     </aside>
     </div>
 </div>

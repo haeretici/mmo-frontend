@@ -132,6 +132,27 @@ function main() {
     assert.ok(wiki.includes('menu-item active" href="/wiki"'), 'wiki has active Wiki nav');
     assert.ok(playHtml.includes('menu-item active" href="/play"'), 'play has active Play nav');
 
+    // Phase 3: Sidebar, Telemetry & Panel Component Upgrades
+    assert.ok(playHtml.includes('am-sidebar-section'), 'play has am-sidebar-section');
+    assert.ok(playHtml.includes('label-retro'), 'play has label-retro');
+    assert.ok(playHtml.includes('game-stat-value'), 'play has game-stat-value');
+    assert.ok(playHtml.includes('card-retro'), 'play has card-retro');
+    assert.ok(playHtml.includes('action-bars-layout'), 'play has action-bars-layout');
+    assert.ok(playHtml.includes('actionBarDockTop'), 'play has actionBarDockTop');
+    assert.ok(playHtml.includes('actionBarDockBottom'), 'play has actionBarDockBottom');
+    assert.ok(playHtml.includes('enterFullscreenIcon'), 'play has enterFullscreenIcon');
+    assert.ok(playHtml.includes('exitFullscreenIcon'), 'play has exitFullscreenIcon');
+    assert.ok(playHtml.includes('game-live-section'), 'play has game-live-section');
+    assert.ok(playHtml.includes('game-live-tile'), 'play has game-live-tile');
+    assert.ok(playHtml.includes('combatSortDropdown'), 'play has combatSortDropdown');
+    assert.ok(playHtml.includes('skills-panel-scroll'), 'play has skills-panel-scroll');
+    assert.ok(playHtml.includes('panel-collapsible-section'), 'play has panel-collapsible-section');
+    assert.ok(play.text.includes('entity-list-hp-bar-fill'), 'play.js has entity-list-hp-bar-fill');
+    assert.ok(play.text.includes('skills-panel-grid'), 'play.js has skills-panel-grid');
+    assert.ok(play.text.includes('renderCombatList'), 'play.js has renderCombatList');
+    assert.ok(play.text.includes('initCollapsiblePanels'), 'play.js has initCollapsiblePanels');
+    assert.ok(prefs.text.includes('engine.sidebarPanels'), 'prefs.js has engine.sidebarPanels');
+
     console.log('ok static_pages');
 }
 

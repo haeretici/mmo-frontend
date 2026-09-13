@@ -130,4 +130,32 @@ function saveCombatSort(id) {
     }
 }
 
+const SIDEBAR_PANELS_KEY = 'engine.sidebarPanels';
+
+function loadSidebarPanelsPrefs() {
+    try {
+        const raw = localStorage.getItem(SIDEBAR_PANELS_KEY);
+        if (!raw) return { collapsed: {}, heights: {} };
+        const parsed = JSON.parse(raw);
+        return {
+            collapsed: (parsed && typeof parsed.collapsed === 'object' && parsed.collapsed) || {},
+            heights: (parsed && typeof parsed.heights === 'object' && parsed.heights) || {}
+        };
+    } catch (e) {
+        return { collapsed: {}, heights: {} };
+    }
+}
+
+function saveSidebarPanelsPrefs(prefs) {
+    try {
+        const payload = {
+            collapsed: (prefs && typeof prefs.collapsed === 'object' && prefs.collapsed) || {},
+            heights: (prefs && typeof prefs.heights === 'object' && prefs.heights) || {}
+        };
+        localStorage.setItem(SIDEBAR_PANELS_KEY, JSON.stringify(payload));
+    } catch (e) {
+        /* ignore */
+    }
+}
+
 deleteLegacyCharacterStore();

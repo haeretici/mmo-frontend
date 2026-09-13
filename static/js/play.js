@@ -260,6 +260,12 @@ function isCreatureEntity(p) {
     return !!(p && p.id >= CREATURE_MIN && !isNpcEntity(p));
 }
 
+function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, function (m) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m];
+    });
+}
+
 function combatRoster() {
     if (!self) return [];
     const list = [];
@@ -272,6 +278,7 @@ function combatRoster() {
         list.push({
             id: p.id,
             name: p.name || ('#' + p.id),
+            look: p.look || '',
             hp: p.hp | 0,
             hpMax: hpMax,
             hpPct: (p.hp | 0) / hpMax,
@@ -293,24 +300,73 @@ function renderCombat() {
     el.textContent = '';
     if (!list.length) {
         const p = document.createElement('p');
-        p.className = 'muted';
+        p.className = 'text-muted small mb-0 p-1 muted';
         p.textContent = 'No creatures in combat';
         el.appendChild(p);
         return;
     }
+    const genre = visualGenre();
     list.forEach(function (row) {
+        const isTarget = row.id === targetId;
         const d = document.createElement('div');
-        d.className = 'entity-row' + (row.id === targetId ? ' is-target' : '');
+        d.className = 'entity-list-row entity-row' + (isTarget ? ' is-target' : '');
         d.dataset.id = String(row.id);
-        const name = document.createElement('div');
-        name.textContent = row.name + '  ' + row.hp + '/' + row.hpMax;
-        const bar = document.createElement('div');
-        bar.className = 'entity-hp';
-        const fill = document.createElement('span');
-        fill.style.width = Math.max(0, Math.min(100, Math.round(row.hpPct * 100))) + '%';
-        bar.appendChild(fill);
-        d.appendChild(name);
-        d.appendChild(bar);
+        d.setAttribute('data-uid', String(row.id));
+
+        const iconBox = document.createElement('div');
+        iconBox.className = 'entity-list-icon';
+        const spriteStem = row.look || row.name;
+        const iconUrl = Sprites && typeof Sprites.spritePath === 'function'
+            ? Sprites.spritePath(genre, 'creatures', spriteStem, 'icon')
+            : null;
+        if (iconUrl) {
+            const img = document.createElement('img');
+            img.src = iconUrl;
+            img.alt = row.name;
+            img.title = row.name;
+            img.onerror = function () {
+                iconBox.innerHTML = '<span class="icon-placeholder">' + escapeHtml(row.name.slice(0, 2).toUpperCase()) + '</span>';
+            };
+            iconBox.appendChild(img);
+        } else {
+            iconBox.innerHTML = '<span class="icon-placeholder">' + escapeHtml(row.name.slice(0, 2).toUpperCase()) + '</span>';
+        }
+
+        const info = document.createElement('div');
+        info.className = 'entity-list-info';
+
+        const nameRow = document.createElement('div');
+        nameRow.className = 'entity-list-name-row';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'entity-list-name';
+        nameSpan.title = row.name;
+        nameSpan.textContent = row.name;
+
+        const hpPctVal = Math.max(0, Math.min(100, Math.round(row.hpPct * 100)));
+        const hpText = document.createElement('span');
+        hpText.className = 'entity-list-hp-text';
+        hpText.textContent = hpPctVal + '%';
+
+        nameRow.appendChild(nameSpan);
+        nameRow.appendChild(hpText);
+
+        const hpBarBg = document.createElement('div');
+        hpBarBg.className = 'entity-list-hp-bar-bg entity-hp';
+
+        const hpBarFill = document.createElement('div');
+        hpBarFill.className = 'entity-list-hp-bar-fill';
+        hpBarFill.style.width = hpPctVal + '%';
+        hpBarFill.style.backgroundColor = row.hpPct > 0.7 ? '#00ff00' : (row.hpPct > 0.4 ? '#ffff00' : '#ff0000');
+
+        hpBarBg.appendChild(hpBarFill);
+
+        info.appendChild(nameRow);
+        info.appendChild(hpBarBg);
+
+        d.appendChild(iconBox);
+        d.appendChild(info);
+
         d.addEventListener('click', function (ev) {
             ev.preventDefault();
             send(C2S.SET_TARGET, u32buf(row.id));
@@ -341,29 +397,54 @@ function renderCombat() {
     });
 }
 
+function renderCombatList() {
+    return renderCombat();
+}
+
 function renderSkills() {
     const el = $('skillsPanelList');
     if (!el) return;
     el.textContent = '';
     if (!self) {
         const p = document.createElement('p');
-        p.className = 'muted';
+        p.className = 'text-muted small mb-0 p-1 muted';
         p.textContent = 'No character';
         el.appendChild(p);
         return;
     }
+
+    const lvlRow = document.createElement('div');
+    lvlRow.className = 'skills-panel-level';
+    lvlRow.title = 'Level ' + (self.level || 1);
+    const lvlLabel = document.createElement('span');
+    lvlLabel.className = 'skills-panel-level-label';
+    lvlLabel.textContent = 'Level';
+    const lvlVal = document.createElement('span');
+    lvlVal.className = 'skills-panel-level-value text-info';
+    lvlVal.textContent = String(self.level || 1);
+    lvlRow.appendChild(lvlLabel);
+    lvlRow.appendChild(lvlVal);
+    el.appendChild(lvlRow);
+
+    const grid = document.createElement('div');
+    grid.className = 'skills-panel-grid';
+
     SKILL_ROWS.forEach(function (row) {
         const d = document.createElement('div');
-        d.className = 'skill-row';
+        d.className = 'skills-panel-row skill-row';
+        d.setAttribute('data-skill', row.key);
         const label = document.createElement('span');
+        label.className = 'skills-panel-name';
         label.textContent = row.label;
         const val = document.createElement('span');
+        val.className = 'skills-panel-value';
         const n = skills && skills[row.key] != null ? skills[row.key] : '—';
         val.textContent = String(n);
         d.appendChild(label);
         d.appendChild(val);
-        el.appendChild(d);
+        grid.appendChild(d);
     });
+    el.appendChild(grid);
 }
 
 function itemLabel(id) {
@@ -485,11 +566,15 @@ function renderDialog(text, replies) {
     if (!panel || !body) return;
     body.textContent = '';
     const t = document.createElement('div');
+    t.className = 'inv-npc-dialog-text mb-2';
     t.textContent = text;
     body.appendChild(t);
+    const repList = document.createElement('div');
+    repList.className = 'inv-npc-dialog-replies';
     replies.forEach(function (label, index) {
         const b = document.createElement('button');
         b.type = 'button';
+        b.className = 'inv-npc-dialog-reply btn-retro';
         b.textContent = label;
         b.onclick = function () {
             const p = new Uint8Array(5);
@@ -497,8 +582,9 @@ function renderDialog(text, replies) {
             p[4] = index;
             send(C2S.TALK_REPLY, p);
         };
-        body.appendChild(b);
+        repList.appendChild(b);
     });
+    body.appendChild(repList);
     placeFloat(panel, talkNpc);
 }
 
@@ -508,21 +594,23 @@ function renderShop(currency, items) {
     if (!panel || !body) return;
     body.textContent = '';
     const cap = document.createElement('div');
-    cap.textContent = 'pay with ' + currency;
+    cap.className = 'text-muted small mb-2';
+    cap.textContent = 'Currency: ' + currency;
     body.appendChild(cap);
     items.forEach(function (it) {
         if (it.buy > 0) {
             const b = document.createElement('button');
             b.type = 'button';
-            b.textContent = 'Buy ' + itemLabel(it.itemId) + ' (' + it.buy + ')';
+            b.className = 'btn btn-retro btn-retro-cyan w-100 mb-1 d-flex justify-content-between align-items-center';
+            b.innerHTML = '<span>Buy ' + escapeHtml(itemLabel(it.itemId)) + '</span><span class="badge-retro">' + it.buy + ' ' + escapeHtml(currency) + '</span>';
             b.onclick = function () { send(C2S.SHOP_BUY, encodeStrPayload(shopNpc, 1, it.itemId)); };
             body.appendChild(b);
         }
         if (it.sell > 0) {
             const b = document.createElement('button');
             b.type = 'button';
-            b.className = 'ghost';
-            b.textContent = 'Sell ' + itemLabel(it.itemId) + ' (' + it.sell + ')';
+            b.className = 'btn btn-retro btn-secondary w-100 mb-1 d-flex justify-content-between align-items-center ghost';
+            b.innerHTML = '<span>Sell ' + escapeHtml(itemLabel(it.itemId)) + '</span><span class="badge-retro">' + it.sell + ' ' + escapeHtml(currency) + '</span>';
             b.onclick = function () { send(C2S.SHOP_SELL, encodeStrPayload(shopNpc, 1, it.itemId)); };
             body.appendChild(b);
         }
@@ -537,14 +625,15 @@ function renderLoot(items) {
     body.textContent = '';
     if (!items.length) {
         const p = document.createElement('p');
-        p.className = 'muted';
+        p.className = 'text-muted small mb-0 p-1 muted';
         p.textContent = 'empty';
         body.appendChild(p);
     } else {
         items.forEach(function (it, slot) {
             const b = document.createElement('button');
             b.type = 'button';
-            b.textContent = it.count + '× ' + itemLabel(it.id);
+            b.className = 'btn btn-retro btn-secondary w-100 mb-1 text-start d-flex align-items-center gap-1';
+            b.innerHTML = '<i class="fa-solid fa-box-open text-muted"></i> <span>' + it.count + '× ' + escapeHtml(itemLabel(it.id)) + '</span>';
             b.onclick = function () {
                 const p = new Uint8Array(5);
                 new DataView(p.buffer).setUint32(0, openCorpse >>> 0, true);
@@ -1936,6 +2025,99 @@ document.addEventListener('click', function (ev) {
     if (menu && !menu.hidden && !menu.contains(ev.target)) hideCtx();
 });
 
+function initCollapsiblePanels() {
+    const panels = document.querySelectorAll('.panel-collapsible-section');
+    const prefs = (typeof loadSidebarPanelsPrefs === 'function' ? loadSidebarPanelsPrefs() : null) || { collapsed: {}, heights: {} };
+
+    panels.forEach(function (sec) {
+        const panelId = sec.getAttribute('data-panel-id');
+        const header = sec.querySelector('.panel-toggle-header');
+        const content = sec.querySelector('.panel-collapsible-content');
+        const icon = sec.querySelector('.panel-toggle-icon');
+        const closeBtn = sec.querySelector('.panel-close-btn');
+        const handle = sec.querySelector('.panel-resize-handle');
+        const scroll = sec.querySelector('.panel-body-scroll');
+
+        if (panelId && prefs.heights && prefs.heights[panelId] && scroll) {
+            scroll.style.maxHeight = prefs.heights[panelId] + 'px';
+        }
+
+        if (panelId && prefs.collapsed && prefs.collapsed[panelId]) {
+            sec.classList.add('panel-collapsed');
+            if (content) content.style.display = 'none';
+            if (handle) handle.style.display = 'none';
+            if (icon) {
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-right');
+            }
+        }
+
+        if (header) {
+            header.addEventListener('click', function (ev) {
+                const t = ev.target;
+                if (t && (t.closest('button') || t.closest('.combat-sort-container') || t.closest('.panel-title-actions') || t.closest('select'))) {
+                    return;
+                }
+                const isCollapsed = sec.classList.toggle('panel-collapsed');
+                if (content) content.style.display = isCollapsed ? 'none' : '';
+                if (handle) handle.style.display = isCollapsed ? 'none' : '';
+                if (icon) {
+                    if (isCollapsed) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-right');
+                    } else {
+                        icon.classList.remove('fa-chevron-right');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                }
+                if (panelId && typeof saveSidebarPanelsPrefs === 'function') {
+                    prefs.collapsed[panelId] = isCollapsed;
+                    saveSidebarPanelsPrefs(prefs);
+                }
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                sec.hidden = true;
+            });
+        }
+
+        if (handle && scroll) {
+            let startY = 0;
+            let startH = 0;
+            function onPointerMove(e) {
+                const next = Math.max(72, Math.min(480, startH + (e.clientY - startY)));
+                scroll.style.maxHeight = next + 'px';
+                if (panelId) {
+                    prefs.heights[panelId] = next;
+                }
+            }
+            function onPointerUp() {
+                window.removeEventListener('pointermove', onPointerMove);
+                window.removeEventListener('pointerup', onPointerUp);
+                sec.classList.remove('is-resizing');
+                if (panelId && typeof saveSidebarPanelsPrefs === 'function') {
+                    saveSidebarPanelsPrefs(prefs);
+                }
+            }
+            handle.addEventListener('pointerdown', function (e) {
+                if (sec.classList.contains('panel-collapsed')) return;
+                if (e.button != null && e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                startY = e.clientY;
+                startH = scroll.offsetHeight || 210;
+                sec.classList.add('is-resizing');
+                window.addEventListener('pointermove', onPointerMove);
+                window.addEventListener('pointerup', onPointerUp);
+            });
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     const leave = $('leave');
     const leaveSide = $('leave-side');
@@ -1975,13 +2157,55 @@ document.addEventListener('DOMContentLoaded', function () {
             if (self) send(C2S.SET_AUTO_CHASE, Uint8Array.of(autoChase ? 1 : 0));
         });
     }
+    const sortBtn = $('combatSortBtn');
+    const sortDropdown = $('combatSortDropdown');
+    const sortItems = document.querySelectorAll('.combat-sort-item');
+    function setCombatSort(next) {
+        combatSort = next;
+        saveCombatSort(next);
+        if (sortEl) sortEl.value = next;
+        if (sortBtn) sortBtn.title = 'Sort: ' + next.replace(/_/g, ' ');
+        if (sortItems) {
+            sortItems.forEach(function (it) {
+                it.classList.toggle('active', it.getAttribute('data-sort') === next);
+            });
+        }
+        renderCombat();
+    }
     if (sortEl) {
+        sortEl.value = combatSort;
         sortEl.addEventListener('change', function () {
-            combatSort = sortEl.value;
-            saveCombatSort(combatSort);
-            renderCombat();
+            setCombatSort(sortEl.value);
         });
     }
+    if (sortBtn && sortDropdown) {
+        sortBtn.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            sortDropdown.hidden = !sortDropdown.hidden;
+        });
+        document.addEventListener('click', function (ev) {
+            if (!sortDropdown.hidden) {
+                const t = ev.target;
+                if (!t || !t.closest || !t.closest('.combat-sort-container')) {
+                    sortDropdown.hidden = true;
+                }
+            }
+        });
+    }
+    if (sortItems) {
+        sortItems.forEach(function (item) {
+            item.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                const k = item.getAttribute('data-sort');
+                if (k) {
+                    setCombatSort(k);
+                    if (sortDropdown) sortDropdown.hidden = true;
+                }
+            });
+        });
+    }
+    setCombatSort(combatSort);
+
     const fs = $('fullscreen-btn');
     const wrap = $('gameCanvasContainer');
     if (fs && wrap) {
@@ -1989,7 +2213,24 @@ document.addEventListener('DOMContentLoaded', function () {
             if (document.fullscreenElement) document.exitFullscreen();
             else wrap.requestFullscreen();
         });
+        document.addEventListener('fullscreenchange', function () {
+            const isFs = !!document.fullscreenElement;
+            const enterIcon = $('enterFullscreenIcon');
+            const exitIcon = $('exitFullscreenIcon');
+            if (enterIcon) enterIcon.style.display = isFs ? 'none' : 'block';
+            if (exitIcon) exitIcon.style.display = isFs ? 'block' : 'none';
+        });
     }
+
+    const settingsBtn = $('openEngineSettingsBtn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', function () {
+            const eqDetails = $('equipment-details');
+            if (eqDetails) eqDetails.click();
+        });
+    }
+
+    initCollapsiblePanels();
     $('dialog-close') && $('dialog-close').addEventListener('click', function () {
         if (talkNpc) send(C2S.TALK_CLOSE, u32buf(talkNpc));
         hideFloat('npc-dialog');

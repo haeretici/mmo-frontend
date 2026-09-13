@@ -3,6 +3,7 @@
 @use 'variables' as *;
 @use 'layout' as *;
 @use 'components' as *;
+@use 'asset-manager' as *;
 @use 'game' as *;
 @use 'wiki' as *;
 
@@ -509,3 +510,183 @@ canvas#world {
   margin: 4px 0;
   cursor: pointer;
 }
+
+// Retro cards and panels
+.card-retro {
+  background: var(--bg-input, #{$bg-input});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+}
+
+.text-xxs {
+  font-size: 0.65rem;
+  line-height: 1.25;
+}
+
+// Fullscreen button SVG support
+.fullscreen-btn {
+  svg {
+    width: 15px;
+    height: 15px;
+    fill: currentColor;
+    display: block;
+  }
+}
+
+// Floating panels (dialog / shop / loot)
+.float-panel,
+.inv-float-panel {
+  position: absolute;
+  pointer-events: auto;
+  min-width: 200px;
+  max-width: 320px;
+  background: var(--bg-darkest, #{$bg-darkest});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.75);
+  padding: 0;
+  z-index: 100;
+  overflow: hidden;
+
+  header,
+  .panel-title-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    background: var(--bg-dark, #{$bg-dark});
+    border-bottom: 1px solid var(--border-color, #{$border-color});
+    margin-bottom: 0;
+
+    strong,
+    .am-sidebar-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent-secondary, #{$accent-secondary});
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 0;
+    }
+
+    .panel-close,
+    .panel-close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted, #{$text-muted});
+      cursor: pointer;
+      font-size: 0.85rem;
+      line-height: 1;
+      padding: 0 2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      &:hover {
+        color: #ff6b6b;
+      }
+    }
+  }
+
+  .float-body,
+  .inv-npc-dialog-body {
+    padding: 8px 10px;
+    max-height: 280px;
+    overflow-y: auto;
+    font-size: 0.8rem;
+  }
+}
+
+.inv-npc-dialog-panel.is-shop {
+  min-width: 260px;
+  max-width: 340px;
+}
+
+// Collapsible panels styling
+.panel-collapsible-section {
+  &.panel-collapsed {
+    .panel-collapsible-content,
+    .panel-resize-handle {
+      display: none !important;
+    }
+  }
+}
+
+.panel-toggle-header {
+  cursor: pointer;
+  user-select: none;
+
+  &:hover .am-sidebar-title {
+    color: #fff;
+  }
+
+  .panel-toggle-icon {
+    font-size: 0.65rem;
+    width: 0.85rem;
+    color: var(--text-muted, #{$text-muted});
+    transition: transform 0.15s ease;
+  }
+}
+
+// Combat sort container in panel header
+.combat-sort-container {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+
+  .combat-sort-btn {
+    font-size: 0.55rem;
+    padding: 0.1rem 0.25rem;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 0;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .combat-sort-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 0;
+    z-index: 1050;
+    background: #0d1117;
+    border: 1px solid var(--border-color, #{$border-color});
+    border-radius: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 0.25rem 0;
+    box-sizing: border-box;
+  }
+
+  .combat-sort-item {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.7rem;
+    color: var(--text-muted, #{$text-muted});
+    cursor: pointer;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #e6edf3;
+    }
+
+    &.active {
+      color: #00ffcc;
+      font-weight: 600;
+      background: rgba(0, 255, 204, 0.08);
+
+      &::after {
+        content: "\2713";
+        margin-left: 0.4rem;
+      }
+    }
+  }
+}
+
