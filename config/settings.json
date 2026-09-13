@@ -1,0 +1,30 @@
+{
+    "bind": "127.0.0.1",
+    "httpPort": 8080,
+    "trustedProxy": false,
+    "logLevel": "info",
+    "siteName": "Engine",
+    "gameOrigin": "http://127.0.0.1:8081",
+    "gameWsUrl": "",
+    "proxyApi": true,
+    "contentPath": "../content",
+    "vocations": [
+        "guardian",
+        "scout",
+        "mystic",
+        "adept",
+        "warden",
+        "adventurer"
+    ],
+    "limits": {
+        "jsonBodyBytes": 16384,
+        "maxHttpPerIpPerMin": 60,
+        "maxConnectionsPerIp": 8,
+        "proxyTimeoutMs": 15000,
+        "passwordMin": 10,
+        "passwordMax": 128,
+        "nameMin": 3,
+        "nameMax": 20,
+        "maxChars": 4
+    }
+}

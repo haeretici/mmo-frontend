@@ -1,0 +1,11 @@
+{
+    "name": "engine-frontend",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Public account site (PHP). Characters live on the game server, not in the browser.",
+    "license": "MIT",
+    "scripts": {
+        "start": "php bin/serve.php",
+        "test": "php tests/load_settings.php && php tests/client_config.php && php tests/visual.php && node tests/protocol.js && node tests/mouse_dispatcher.js && node tests/path_walk.js && node tests/keyboard_walk.js && node tests/tile_draw.js && node tests/sprites.js && node tests/visual_map.js && node tests/entity_hud.js && node tests/ground_renderer.js && node tests/sprite_presentation.js && node tests/combat_fx.js && node tests/static_pages.js && node tests/site_http.js"
+    }
+}

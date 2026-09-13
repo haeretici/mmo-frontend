@@ -1,0 +1,6 @@
+{
+    "bind": "127.0.0.1",
+    "httpPort": 8080,
+    "logLevel": "debug",
+    "gameOrigin": "http://127.0.0.1:8081"
+}

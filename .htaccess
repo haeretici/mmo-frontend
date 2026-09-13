@@ -1,0 +1,4 @@
+RewriteEngine On
+RewriteRule ^(\.git|config|php|tests|src|bin|node_modules)(/|$) - [F]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [L]

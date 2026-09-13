@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Login · Engine</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<header class="top">
+    <a class="mark" href="/">Engine</a>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/login" aria-current="page">Login</a>
+        <a href="/register">Register</a>
+        <a href="/wiki">Wiki</a>
+    </nav>
+</header>
+<main>
+    <section class="panel">
+        <h2>Login</h2>
+        <form id="login-form">
+            <label>Email
+                <input id="email" type="email" autocomplete="username" required>
+            </label>
+            <label>Password
+                <input id="password" type="password" autocomplete="current-password" required minlength="10" maxlength="128">
+            </label>
+            <button type="submit">Enter</button>
+            <p id="status" class="status"></p>
+        </form>
+        <p class="hint">No account? <a href="/register">Register</a>.</p>
+    </section>
+</main>
+<footer>Passwords stay on HTTPS account routes. They never go on the game socket.</footer>
+<script src="/js/prefs.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+</body>
+</html>

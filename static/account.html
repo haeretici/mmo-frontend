@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Characters · Engine</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<header class="top">
+    <a class="mark" href="/">Engine</a>
+    <nav>
+        <a href="/account" aria-current="page">Characters</a>
+        <a href="/wiki">Wiki</a>
+        <a href="/" id="logout-link">Logout</a>
+    </nav>
+</header>
+<main>
+    <p class="hint">Signed in as <span id="who">…</span></p>
+    <p id="status" class="status"></p>
+    <section class="panel">
+        <h2>Characters</h2>
+        <p id="cap-hint" class="hint"></p>
+        <div id="char-list"></div>
+    </section>
+    <section class="panel">
+        <h2>Create</h2>
+        <form id="create-form">
+            <label>Name
+                <input id="char-name" type="text" maxlength="20" minlength="3" autocomplete="off" required>
+            </label>
+            <label>Vocation
+                <select id="char-voc"></select>
+            </label>
+            <p class="hint">3–20 characters. Start with a letter. Digits allowed. Spaces only between words.</p>
+            <button type="submit">Create</button>
+        </form>
+    </section>
+</main>
+<footer>Play fetches a one-shot token, then opens the world. The token is not placed in the URL.</footer>
+<script src="/js/prefs.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/account.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Register · Engine</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<header class="top">
+    <a class="mark" href="/">Engine</a>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/login">Login</a>
+        <a href="/register" aria-current="page">Register</a>
+        <a href="/wiki">Wiki</a>
+    </nav>
+</header>
+<main>
+    <section class="panel">
+        <h2>Register</h2>
+        <form id="register-form">
+            <label>Email
+                <input id="email" type="email" autocomplete="username" required>
+            </label>
+            <label>Password
+                <input id="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
+            </label>
+            <label>Confirm password
+                <input id="password-confirm" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
+            </label>
+            <p class="hint">Password 10–128 characters. Email is unique. Duplicate emails return a generic conflict.</p>
+            <button type="submit">Create account</button>
+            <p id="status" class="status"></p>
+        </form>
+    </section>
+</main>
+<footer>Session cookie is httpOnly. This page does not write a character file.</footer>
+<script src="/js/prefs.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+</body>
+</html>

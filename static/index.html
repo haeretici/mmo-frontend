@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Engine</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+    <a class="mark" href="/">Engine</a>
+    <nav>
+        <a href="/" aria-current="page">Home</a>
+        <a href="/login">Login</a>
+        <a href="/register">Register</a>
+        <a href="/wiki">Wiki</a>
+    </nav>
+</header>
+<main id="main">
+    <section class="hero">
+        <h1>Characters live on the server.</h1>
+        <p class="lede">
+            This site is the public account desk: register, pick a name, enter the world.
+            The tab does not keep a character save. There is no offline hunt.
+        </p>
+        <div class="row" id="home-actions">
+            <a class="btn" href="/register">Create account</a>
+            <a class="btn ghost" href="/login">Login</a>
+        </div>
+    </section>
+    <section class="panel">
+        <h2>What is stored here</h2>
+        <p class="hint">
+            Last email in this browser, if you want the login field filled.
+            Play uses a one-shot token in this tab only. Bag, position, and quest flags
+            are written by the game process on logout and on its own clocks — never on a client timer.
+        </p>
+    </section>
+</main>
+<footer>Public site · game authority is the engine server</footer>
+<script src="/js/prefs.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/home.js"></script>
+</body>
+</html>
