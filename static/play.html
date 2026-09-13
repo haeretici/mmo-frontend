@@ -162,21 +162,62 @@
                 </div>
                 <div class="equipment-card-container">
                     <div class="equipment-card" id="activeEquipmentCard">
-                        <div class="slot-item" style="left:1px;top:19px;" data-slot="amulet" title="Amulet"><span class="slot-placeholder">◆</span></div>
-                        <div class="slot-item" style="left:37px;top:1px;" data-slot="head" title="Helmet"><span class="slot-placeholder">H</span></div>
-                        <div class="slot-item" style="left:73px;top:19px;" data-slot="backpack" title="Backpack"><span class="slot-placeholder">B</span></div>
-                        <div class="slot-item" style="left:1px;top:55px;" data-slot="weapon" title="Weapon"><span class="slot-placeholder">W</span></div>
-                        <div class="slot-item" style="left:37px;top:37px;" data-slot="chest" title="Armor"><span class="slot-placeholder">A</span></div>
-                        <div class="slot-item" style="left:73px;top:55px;" data-slot="shield" title="Shield"><span class="slot-placeholder">S</span></div>
-                        <div class="slot-item" style="left:1px;top:91px;" data-slot="ring" title="Ring"><span class="slot-placeholder">R</span></div>
-                        <div class="slot-item" style="left:37px;top:73px;" data-slot="legs" title="Legs"><span class="slot-placeholder">L</span></div>
-                        <div class="slot-item" style="left:73px;top:91px;" data-slot="light" title="Light"><span class="slot-placeholder">*</span></div>
-                        <div class="slot-item" style="left:37px;top:109px;" data-slot="boots" title="Boots"><span class="slot-placeholder">F</span></div>
-                        <div class="soul" style="left:1px;top:127px;"><p>Soul:</p><p class="total" id="activeEqSoul">—</p></div>
-                        <div class="capacity" style="left:73px;top:127px;"><p>Cap:</p><p class="total" id="activeEqCap">—</p></div>
+                        <div class="slot-item amulet" style="left:1px;top:19px;" data-slot="amulet" title="Amulet">
+                            <span class="slot-placeholder"><i class="fa-solid fa-gem"></i></span>
+                        </div>
+                        <div class="slot-item helmet" style="left:37px;top:1px;" data-slot="head" title="Helmet / Head">
+                            <span class="slot-placeholder"><i class="fa-solid fa-helmet-safety"></i></span>
+                        </div>
+                        <div class="slot-item bag" style="left:73px;top:19px;" data-slot="backpack" title="Backpack">
+                            <span class="slot-placeholder"><i class="fa-solid fa-bag-shopping"></i></span>
+                        </div>
+                        <div class="slot-item rightHand" style="left:1px;top:55px;" data-slot="weapon" title="Weapon / Right Hand">
+                            <span class="slot-placeholder"><i class="fa-solid fa-hand-fist"></i></span>
+                        </div>
+                        <div class="slot-item armor" style="left:37px;top:37px;" data-slot="chest" title="Armor / Chest">
+                            <span class="slot-placeholder"><i class="fa-solid fa-vest"></i></span>
+                        </div>
+                        <div class="slot-item leftHand" style="left:73px;top:55px;" data-slot="shield" title="Shield / Left Hand">
+                            <span class="slot-placeholder"><i class="fa-solid fa-shield"></i></span>
+                        </div>
+                        <div class="slot-item ring" style="left:1px;top:91px;" data-slot="ring" title="Ring">
+                            <span class="slot-placeholder"><i class="fa-solid fa-ring"></i></span>
+                        </div>
+                        <div class="slot-item legs" style="left:37px;top:73px;" data-slot="legs" title="Legs">
+                            <span class="slot-placeholder"><i class="fa-solid fa-socks"></i></span>
+                        </div>
+                        <div class="slot-item light" style="left:73px;top:91px;" data-slot="light" title="Utility / Light">
+                            <span class="slot-placeholder"><i class="fa-solid fa-lightbulb"></i></span>
+                        </div>
+                        <div class="slot-item boots" style="left:37px;top:109px;" data-slot="boots" title="Boots">
+                            <span class="slot-placeholder"><i class="fa-solid fa-shoe-prints"></i></span>
+                        </div>
+                        <div class="soul" style="left:1px;top:127px;">
+                            <p>Soul:</p>
+                            <p class="total" id="activeEqSoul">100</p>
+                        </div>
+                        <div class="capacity" style="left:73px;top:127px;">
+                            <p>Cap:</p>
+                            <p class="total" id="activeEqCap">—</p>
+                        </div>
+                        <div class="eq-status-bar" id="activeEqStatusBar" role="status" aria-label="Active conditions" hidden></div>
                     </div>
                 </div>
             </section>
+            <div id="sidebarPanelToggles" class="sidebar-panel-toggles" role="toolbar" aria-label="Open or close sidebar panels">
+                <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleBackpackBtn" data-panel-toggle="backpack" aria-label="Toggle Backpack" title="Toggle Backpack">
+                    <i class="fa-solid fa-bag-shopping" aria-hidden="true"></i>
+                    <span class="panel-toggle-label"> Backpack</span>
+                </button>
+                <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleCombatBtn" data-panel-toggle="combat" aria-label="Toggle Combat" title="Toggle Combat">
+                    <i class="fa-solid fa-hand-fist" aria-hidden="true"></i>
+                    <span class="panel-toggle-label"> Combat</span>
+                </button>
+                <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleSkillsBtn" data-panel-toggle="skills" aria-label="Toggle Skills" title="Toggle Skills">
+                    <i class="fa-solid fa-chart-simple" aria-hidden="true"></i>
+                    <span class="panel-toggle-label"> Skills</span>
+                </button>
+            </div>
             <section class="game-backpack-panel panel-collapsible-section play-panel" data-panel-id="backpack" aria-label="Backpack">
                 <div class="am-sidebar-title-row panel-title-bar">
                     <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
@@ -193,17 +234,39 @@
                 </div>
                 <div class="panel-collapsible-content">
                     <div class="backpack-grid-scroll panel-body-scroll" id="backpackScroll">
-                        <div class="backpack-grid" id="backpackGrid"></div>
+                        <div class="backpack-grid" id="backpackGrid" title="Character backpack (20 slots; nested bags open in panels)">
+                            <div class="backpack-slot inv-slot" data-slot-index="0" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="1" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="2" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="3" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="4" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="5" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="6" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="7" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="8" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="9" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="10" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="11" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="12" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="13" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="14" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="15" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="16" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="17" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="18" data-container-uid="root"></div>
+                            <div class="backpack-slot inv-slot" data-slot-index="19" data-container-uid="root"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
             </section>
-            <section class="play-panel panel-collapsible-section" id="openBagPanel" data-panel-id="open-bag" aria-label="Open bag" hidden>
+            <section class="game-backpack-panel panel-collapsible-section play-panel" id="openBagPanel" data-panel-id="open-bag" aria-label="Open bag" hidden>
                 <div class="am-sidebar-title-row panel-title-bar">
-                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0">
+                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
                         <div class="d-flex align-items-center gap-1">
                             <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
                             <h2 id="openBagTitle" class="am-sidebar-title mb-0">Bag</h2>
+                            <span id="openBagCount" class="text-muted small ms-1">(0/20)</span>
                         </div>
                     </div>
                     <div class="panel-title-actions">
@@ -213,10 +276,11 @@
                     </div>
                 </div>
                 <div class="panel-collapsible-content">
-                    <div class="backpack-grid-scroll panel-body-scroll">
+                    <div class="backpack-grid-scroll panel-body-scroll" id="openBagScroll">
                         <div class="backpack-grid" id="openBagGrid"></div>
                     </div>
                 </div>
+                <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
             </section>
             <section class="game-combat-panel panel-collapsible-section play-panel" data-panel-id="combat" aria-label="Combat">
                 <div class="am-sidebar-title-row panel-title-bar">

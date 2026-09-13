@@ -153,6 +153,24 @@ function main() {
     assert.ok(play.text.includes('initCollapsiblePanels'), 'play.js has initCollapsiblePanels');
     assert.ok(prefs.text.includes('engine.sidebarPanels'), 'prefs.js has engine.sidebarPanels');
 
+    // Phase 4: Functional & Visual Inventory Engine
+    assert.ok(playHtml.includes('id="sidebarPanelToggles"'), 'play has sidebarPanelToggles');
+    assert.ok(playHtml.includes('id="toggleBackpackBtn"'), 'play has toggleBackpackBtn');
+    assert.ok(playHtml.includes('id="toggleCombatBtn"'), 'play has toggleCombatBtn');
+    assert.ok(playHtml.includes('id="toggleSkillsBtn"'), 'play has toggleSkillsBtn');
+    assert.ok(playHtml.includes('id="activeEqStatusBar"'), 'play has activeEqStatusBar');
+    assert.ok(playHtml.includes('fa-helmet-safety'), 'play has fontawesome helmet icon');
+    assert.ok(playHtml.includes('fa-shoe-prints'), 'play has fontawesome boots icon');
+    assert.ok(playHtml.includes('backpack-slot inv-slot'), 'play has pre-rendered backpack-slot inv-slot');
+    assert.ok(playHtml.includes('id="openBagCount"'), 'play has openBagCount');
+    assert.ok(play.text.includes('resolveItemSpriteUrl'), 'play.js has resolveItemSpriteUrl');
+    assert.ok(play.text.includes('formatItemTooltip'), 'play.js has formatItemTooltip');
+    assert.ok(play.text.includes('encodeMoveItem'), 'play.js has encodeMoveItem');
+    assert.ok(play.text.includes('initSidebarPanels'), 'play.js has initSidebarPanels');
+    assert.ok(play.text.includes('openSidebarPanel'), 'play.js has openSidebarPanel');
+    assert.ok(play.text.includes('onEquipDrop'), 'play.js has onEquipDrop');
+    assert.ok(play.text.includes('onContainerDrop'), 'play.js has onContainerDrop');
+
     console.log('ok static_pages');
 }
 

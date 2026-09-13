@@ -166,12 +166,50 @@
         return p;
     }
 
+    const LOC_KIND = Object.freeze({
+        CONTAINER: 0,
+        EQUIPMENT: 1
+    });
+
     function encodeUnequip(slot) {
         const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
         const slotb = enc ? enc.encode(String(slot || '')) : Buffer.from(String(slot || ''), 'utf8');
         const p = new Uint8Array(1 + slotb.length);
         p[0] = slotb.length;
         p.set(slotb, 1);
+        return p;
+    }
+
+    function writeItemLoc(loc) {
+        const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+        const isEquip = loc && (loc.kind === 'equipment' || loc.kind === LOC_KIND.EQUIPMENT || (loc.slot && !loc.containerUid && !loc.containerId));
+        if (isEquip) {
+            const slotb = enc ? enc.encode(String(loc.slot || '')) : Buffer.from(String(loc.slot || ''), 'utf8');
+            const b = new Uint8Array(1 + 1 + slotb.length);
+            b[0] = LOC_KIND.EQUIPMENT;
+            b[1] = slotb.length;
+            b.set(slotb, 2);
+            return b;
+        }
+        const cid = String((loc && (loc.containerUid || loc.containerId)) || 'root');
+        const cidb = enc ? enc.encode(cid) : Buffer.from(cid, 'utf8');
+        const idx = ((loc && (loc.index != null ? loc.index : loc.slotIndex))) | 0;
+        const b = new Uint8Array(1 + 1 + cidb.length + 1);
+        b[0] = LOC_KIND.CONTAINER;
+        b[1] = cidb.length;
+        b.set(cidb, 2);
+        b[2 + cidb.length] = idx & 0xff;
+        return b;
+    }
+
+    function encodeMoveItem(from, to, count) {
+        const bFrom = writeItemLoc(from);
+        const bTo = writeItemLoc(to);
+        const p = new Uint8Array(bFrom.length + bTo.length + 2);
+        p.set(bFrom, 0);
+        p.set(bTo, bFrom.length);
+        const v = new DataView(p.buffer, p.byteOffset, p.byteLength);
+        v.setUint16(bFrom.length + bTo.length, (count || 0) & 0xffff, true);
         return p;
     }
 
@@ -216,6 +254,7 @@
         APPEAR_FLAG,
         SWING_FLAG,
         SKILL_ORDER,
+        LOC_KIND,
         hexToBytes,
         encodeFrame,
         u32buf,
@@ -225,6 +264,7 @@
         encodeContainerSlot,
         encodeEquip,
         encodeUnequip,
+        encodeMoveItem,
         Reader
     };
 });

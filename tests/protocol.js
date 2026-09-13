@@ -42,6 +42,15 @@ function main() {
     assert.strictEqual(sr.u16(), 3);
     assert.strictEqual(sr.str(), 'gold_coin');
 
+    assert.strictEqual(fe.LOC_KIND.CONTAINER, 0);
+    assert.strictEqual(fe.LOC_KIND.EQUIPMENT, 1);
+    const movePayload = fe.encodeMoveItem(
+        { kind: 'container', containerUid: 'root', index: 2 },
+        { kind: 'equipment', slot: 'head' },
+        5
+    );
+    assert.ok(movePayload.length > 0);
+
     const serverPath = path.join(__dirname, '../../server/src/protocol/opcodes.js');
     if (fs.existsSync(serverPath)) {
         const se = require(serverPath);
@@ -51,15 +60,26 @@ function main() {
             assert.strictEqual(fe.REASON[k], se.REASON[k], k);
         }
         assert.strictEqual(fe.APPEAR_FLAG.NPC, se.APPEAR_FLAG.NPC);
+        assert.strictEqual(fe.LOC_KIND.CONTAINER, se.LOC_KIND.CONTAINER);
+        assert.strictEqual(fe.LOC_KIND.EQUIPMENT, se.LOC_KIND.EQUIPMENT);
         const messages = require(path.join(__dirname, '../../server/src/protocol/messages.js'));
         const look = messages.decodeAppear(messages.encodeAppear({
             id: 9, name: 'Rat', x: 1, y: 2, z: 6, hp: 5, hpMax: 20, kind: 'rat'
         }));
         assert.strictEqual(look.look, 'rat');
         assert.strictEqual(look.name, 'Rat');
+
+        const decodedMove = messages.decodeMoveItem(movePayload);
+        assert.strictEqual(decodedMove.from.kind, 'container');
+        assert.strictEqual(decodedMove.from.containerUid, 'root');
+        assert.strictEqual(decodedMove.from.index, 2);
+        assert.strictEqual(decodedMove.to.kind, 'equipment');
+        assert.strictEqual(decodedMove.to.slot, 'head');
+        assert.strictEqual(decodedMove.count, 5);
     }
 
     console.log('ok protocol');
 }
+
 
 main();

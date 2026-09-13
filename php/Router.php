@@ -59,6 +59,24 @@ final class Router
             exit;
         }
 
+        if (($method === 'GET' || $method === 'HEAD') && ($path === '/content/equipment.json' || $path === '/equipment.json')) {
+            $contentRoot = Settings::resolveContentPath($settings);
+            $file = $contentRoot . DIRECTORY_SEPARATOR . 'equipment.json';
+            if (is_file($file)) {
+                http_response_code(200);
+                header('Content-Type: application/json; charset=utf-8');
+                header('Content-Length: ' . (string) filesize($file));
+                header('Cache-Control: public, max-age=3600');
+                header('X-Content-Type-Options: nosniff');
+                header('Content-Security-Policy: ' . ClientConfig::csp($settings));
+                if ($method !== 'HEAD') {
+                    readfile($file);
+                }
+                exit;
+            }
+        }
+
+
         if (Http::tryStatic($path, $settings)) {
             exit;
         }

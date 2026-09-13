@@ -34,7 +34,7 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, Reader } = EngineProtocol;
 const Mouse = EngineMouse;
 const Path = EnginePath;
 const Draw = EngineTileDraw;
@@ -75,6 +75,8 @@ let mouse = loadMouseControls();
 let autoChase = loadAutoChase();
 let combatSort = loadCombatSort();
 let selectedBag = -1;
+let selectedOpenBag = -1;
+let selectedEquipSlot = null;
 let walkDest = null;
 let walkBusy = false;
 let walkRetry = 0;
@@ -470,51 +472,328 @@ function readBagView(r) {
     return { containerId: containerId, capacity: capacity, slots: slots };
 }
 
+const itemCatalog = new Map();
+
+function loadItemCatalog() {
+    if (typeof fetch === 'undefined') return;
+    fetch('/content/equipment.json')
+        .then(function (res) {
+            if (!res.ok) return null;
+            return res.json();
+        })
+        .then(function (data) {
+            if (!data) return;
+            const list = Array.isArray(data.items) ? data.items : (Array.isArray(data) ? data : []);
+            for (let i = 0; i < list.length; i++) {
+                const it = list[i];
+                if (it && it.id) {
+                    itemCatalog.set(it.id, it);
+                }
+            }
+            renderEquipment();
+            renderBag();
+        })
+        .catch(function () {});
+}
+
+function resolveItemSpriteUrl(itemOrId, genre) {
+    if (typeof EngineSprites !== 'undefined' && typeof EngineSprites.resolveItemSpriteUrl === 'function') {
+        return EngineSprites.resolveItemSpriteUrl(itemOrId, genre);
+    }
+    if (!itemOrId) return null;
+    let id = '';
+    if (typeof itemOrId === 'string') {
+        id = itemOrId;
+    } else if (typeof itemOrId === 'object') {
+        if (itemOrId.sprites && itemOrId.sprites.alpha) return itemOrId.sprites.alpha;
+        if (itemOrId.sprite && typeof itemOrId.sprite === 'string') return itemOrId.sprite;
+        id = itemOrId.customSprite || itemOrId.spriteId || itemOrId.id || itemOrId.itemId || '';
+    }
+    if (!id) return null;
+    const stem = String(id).trim().replace(/\.png$/i, '').split(/[_\s-]+/).filter(Boolean).map(function (p) {
+        return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
+    }).join('_');
+    const g = String(genre || 'rpg_fantasy').replace(/[^a-z0-9_]/gi, '') || 'rpg_fantasy';
+    return '/sprites/' + g + '/equipment/alpha/' + stem + '.png';
+}
+
+function formatItemTooltip(itemId, stackCount) {
+    const meta = itemCatalog.get(itemId);
+    const rawLabel = (meta && meta.label) || itemLabel(itemId);
+    const label = rawLabel.split(' ').map(function (w) {
+        return w.charAt(0).toUpperCase() + w.slice(1);
+    }).join(' ');
+    const lines = [];
+    if (stackCount && stackCount > 1) {
+        lines.push(label + ' (Count: ' + stackCount + ')');
+    } else {
+        lines.push(label);
+    }
+    if (meta) {
+        const details = [];
+        const kind = meta.category || meta.weaponType || meta.type || meta.slot;
+        if (kind) details.push('Type: ' + kind);
+        if (meta.atk != null && meta.atk > 0) details.push('Atk: ' + meta.atk);
+        if (meta.defense != null && meta.defense > 0) details.push('Def: ' + meta.defense);
+        if (meta.armor != null && meta.armor > 0) details.push('Arm: ' + meta.armor);
+        if (meta.range != null && meta.range > 1) details.push('Range: ' + meta.range);
+        if (meta.twoHanded || meta.hands === 2) details.push('Two-handed');
+        if (meta.weight != null && meta.weight > 0) details.push('Weight: ' + (meta.weight / 100).toFixed(2) + ' oz');
+        if (details.length) {
+            lines.push(details.join(' · '));
+        }
+    }
+    return lines.join('\n');
+}
+
+const SLOT_PLACEHOLDERS = Object.freeze({
+    head: '<i class="fa-solid fa-helmet-safety"></i>',
+    chest: '<i class="fa-solid fa-vest"></i>',
+    legs: '<i class="fa-solid fa-socks"></i>',
+    boots: '<i class="fa-solid fa-shoe-prints"></i>',
+    weapon: '<i class="fa-solid fa-hand-fist"></i>',
+    shield: '<i class="fa-solid fa-shield"></i>',
+    amulet: '<i class="fa-solid fa-gem"></i>',
+    ring: '<i class="fa-solid fa-ring"></i>',
+    backpack: '<i class="fa-solid fa-bag-shopping"></i>',
+    light: '<i class="fa-solid fa-lightbulb"></i>'
+});
+
+let currentDrag = null;
+
+function onSlotDragStart(ev, containerId, slotIndex, item) {
+    if (!item) return;
+    currentDrag = {
+        kind: 'container',
+        containerId: containerId || 'root',
+        slotIndex: slotIndex,
+        item: item
+    };
+    if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'move';
+        try {
+            ev.dataTransfer.setData('text/plain', JSON.stringify(currentDrag));
+        } catch (e) {}
+    }
+    ev.currentTarget.classList.add('is-dragging');
+}
+
+function onEquipDragStart(ev, slotKey) {
+    const it = equipment[slotKey];
+    if (!it) return;
+    currentDrag = {
+        kind: 'equipment',
+        slot: slotKey,
+        item: it
+    };
+    if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'move';
+        try {
+            ev.dataTransfer.setData('text/plain', JSON.stringify(currentDrag));
+        } catch (e) {}
+    }
+    ev.currentTarget.classList.add('is-dragging');
+}
+
+function onDragOver(ev) {
+    if (!currentDrag) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    ev.currentTarget.classList.add('drag-over');
+}
+
+function onDragLeave(ev) {
+    ev.currentTarget.classList.remove('drag-over');
+}
+
+function onDragEnd() {
+    currentDrag = null;
+    document.querySelectorAll('.is-dragging, .drag-over').forEach(function (el) {
+        el.classList.remove('is-dragging', 'drag-over');
+    });
+}
+
+function onEquipDrop(ev, targetSlotKey) {
+    ev.preventDefault();
+    ev.currentTarget.classList.remove('drag-over');
+    if (!currentDrag) return;
+    if (currentDrag.kind === 'container') {
+        send(C2S.EQUIP, encodeEquip(currentDrag.containerId, currentDrag.slotIndex, targetSlotKey));
+    } else if (currentDrag.kind === 'equipment' && currentDrag.slot !== targetSlotKey) {
+        send(C2S.MOVE_ITEM, encodeMoveItem(
+            { kind: 'equipment', slot: currentDrag.slot },
+            { kind: 'equipment', slot: targetSlotKey },
+            0
+        ));
+    }
+    onDragEnd();
+}
+
+function onContainerDrop(ev, targetContainerId, targetIndex) {
+    ev.preventDefault();
+    ev.currentTarget.classList.remove('drag-over');
+    if (!currentDrag) return;
+    if (currentDrag.kind === 'equipment') {
+        send(C2S.UNEQUIP, encodeUnequip(currentDrag.slot));
+    } else if (currentDrag.kind === 'container') {
+        if (currentDrag.containerId === targetContainerId && currentDrag.slotIndex === targetIndex) {
+            onDragEnd();
+            return;
+        }
+        send(C2S.MOVE_ITEM, encodeMoveItem(
+            { kind: 'container', containerUid: currentDrag.containerId, index: currentDrag.slotIndex },
+            { kind: 'container', containerUid: targetContainerId, index: targetIndex },
+            0
+        ));
+    }
+    onDragEnd();
+}
+
+function showEquipMenu(clientX, clientY, item, slotKey) {
+    const el = $('ctx-menu');
+    const wrap = $('gameCanvasContainer');
+    if (!el || !wrap) return;
+    el.textContent = '';
+    const rows = [
+        { label: 'Look', fn: function () { fct(formatItemTooltip(item.id, item.count)); } },
+        {
+            label: 'Unequip',
+            fn: function () {
+                send(C2S.UNEQUIP, encodeUnequip(slotKey));
+            }
+        }
+    ];
+    if (slotKey === 'backpack') {
+        rows.push({
+            label: 'Open',
+            fn: function () {
+                openSidebarPanel('backpack');
+            }
+        });
+    }
+    rows.forEach(function (entry) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = entry.label;
+        b.onclick = function () { hideCtx(); entry.fn(); };
+        el.appendChild(b);
+    });
+    const rect = wrap.getBoundingClientRect();
+    el.hidden = false;
+    el.style.left = Math.max(0, clientX - rect.left) + 'px';
+    el.style.top = Math.max(0, clientY - rect.top) + 'px';
+}
+
 function paintGrid(el, view, selectedIndex, kind) {
     if (!el) return;
-    el.textContent = '';
-    const cap = Math.max(4, (view && view.capacity) || BACKPACK_SLOTS);
-    const rows = Math.ceil(cap / 4) * 4;
-    for (let i = 0; i < rows; i++) {
-        const slot = document.createElement('div');
-        slot.className = 'backpack-slot';
+    const cap = Math.max(20, (view && view.capacity) || BACKPACK_SLOTS);
+    const containerId = (view && view.containerId) ? view.containerId : (kind === 'nested' ? 'open-bag' : 'root');
+
+    while (el.children.length < cap) {
+        const s = document.createElement('div');
+        s.className = 'backpack-slot inv-slot';
+        s.dataset.slotIndex = String(el.children.length);
+        s.dataset.containerUid = containerId;
+        el.appendChild(s);
+    }
+    while (el.children.length > cap) {
+        el.removeChild(el.lastChild);
+    }
+
+    for (let i = 0; i < cap; i++) {
+        const slot = el.children[i];
+        slot.className = 'backpack-slot inv-slot';
         slot.dataset.slotIndex = String(i);
+        slot.dataset.containerUid = containerId;
         const it = slotAt(view, i);
+
+        slot.innerHTML = '';
         if (it) {
-            slot.className += ' is-filled';
-            if (i === selectedIndex) slot.className += ' is-selected';
-            slot.title = itemLabel(it.id);
-            slot.textContent = itemLabel(it.id).slice(0, 6);
-            if (it.flags & 1) slot.className += ' is-container';
+            slot.classList.add('is-filled');
+            slot.setAttribute('draggable', 'true');
+            if (i === selectedIndex) slot.classList.add('is-selected');
+            if (it.flags & 1) slot.classList.add('is-container');
+
+            const tooltip = formatItemTooltip(it.id, it.count);
+            slot.title = tooltip;
+
+            const img = document.createElement('img');
+            img.src = resolveItemSpriteUrl(it.id, 'rpg_fantasy');
+            img.alt = itemLabel(it.id);
+            img.title = tooltip;
+            img.draggable = false;
+            img.onerror = function () {
+                this.style.display = 'none';
+                if (!slot.querySelector('.slot-label')) {
+                    const fallback = document.createElement('span');
+                    fallback.className = 'slot-label';
+                    fallback.textContent = itemLabel(it.id).slice(0, 6);
+                    slot.appendChild(fallback);
+                }
+            };
+            slot.appendChild(img);
+
             if (it.count > 1) {
                 const c = document.createElement('span');
                 c.className = 'inv-stack-count';
                 c.textContent = String(it.count);
                 slot.appendChild(c);
             }
+        } else {
+            slot.classList.remove('is-filled', 'is-selected', 'is-container');
+            slot.setAttribute('draggable', 'false');
+            slot.title = 'Empty slot';
         }
-        slot.addEventListener('click', function (ev) {
+
+        slot.onclick = function (ev) {
             ev.preventDefault();
             if (kind === 'bag') {
-                selectedBag = it ? i : -1;
+                selectedBag = it ? (selectedBag === i ? -1 : i) : -1;
+                selectedEquipSlot = null;
+                renderBag();
+                renderEquipment();
+            } else if (kind === 'nested') {
+                selectedOpenBag = it ? (selectedOpenBag === i ? -1 : i) : -1;
                 renderBag();
             }
-        });
-        slot.addEventListener('dblclick', function (ev) {
+        };
+
+        slot.ondblclick = function (ev) {
             ev.preventDefault();
-            if (!it || !view.containerId) return;
-            send(C2S.USE_ITEM, encodeContainerSlot(view.containerId, i));
-        });
-        slot.addEventListener('contextmenu', function (ev) {
+            if (!it || !containerId) return;
+            if (it.flags & 1) {
+                send(C2S.OPEN_BAG, encodeContainerSlot(containerId, i));
+            } else {
+                send(C2S.USE_ITEM, encodeContainerSlot(containerId, i));
+            }
+        };
+
+        slot.oncontextmenu = function (ev) {
             ev.preventDefault();
             if (!it) return;
             if (kind === 'bag') {
                 selectedBag = i;
                 renderBag();
+            } else if (kind === 'nested') {
+                selectedOpenBag = i;
+                renderBag();
             }
-            showInvMenu(ev.clientX, ev.clientY, it, view.containerId, i);
-        });
-        el.appendChild(slot);
+            showInvMenu(ev.clientX, ev.clientY, it, containerId, i);
+        };
+
+        slot.ondragstart = function (ev) {
+            if (!it) {
+                ev.preventDefault();
+                return;
+            }
+            onSlotDragStart(ev, containerId, i, it);
+        };
+        slot.ondragover = onDragOver;
+        slot.ondragleave = onDragLeave;
+        slot.ondrop = function (ev) {
+            onContainerDrop(ev, containerId, i);
+        };
+        slot.ondragend = onDragEnd;
     }
 }
 
@@ -525,7 +804,13 @@ function renderBag() {
     if (openBag && openBag.containerId) {
         const title = $('openBagTitle');
         if (title) title.textContent = 'Bag';
-        paintGrid($('openBagGrid'), openBag, -1, 'nested');
+        const countEl = $('openBagCount');
+        if (countEl) {
+            const filledCount = openBag.slots ? openBag.slots.length : 0;
+            const capCount = openBag.capacity || 20;
+            countEl.textContent = '(' + filledCount + '/' + capCount + ')';
+        }
+        paintGrid($('openBagGrid'), openBag, selectedOpenBag, 'nested');
     }
 }
 
@@ -537,28 +822,85 @@ function renderEquipment() {
         const el = nodes[i];
         const key = el.getAttribute('data-slot');
         const it = equipment[key];
-        const ph = el.querySelector('.slot-placeholder');
-        let label = el.querySelector('.slot-label');
+        el.innerHTML = '';
         if (it) {
-            el.classList.add('is-filled');
-            if (!label) {
-                label = document.createElement('span');
-                label.className = 'slot-label';
-                el.appendChild(label);
-            }
-            label.textContent = itemLabel(it.id).slice(0, 6);
-            if (ph) ph.hidden = true;
-            el.title = itemLabel(it.id);
+            el.classList.add('is-filled', 'inv-equip-slot');
+            el.classList.toggle('is-selected', selectedEquipSlot === key);
+            el.setAttribute('draggable', 'true');
+            const tooltip = formatItemTooltip(it.id, it.count);
+            el.title = tooltip;
+
+            const img = document.createElement('img');
+            img.src = resolveItemSpriteUrl(it.id, 'rpg_fantasy');
+            img.alt = itemLabel(it.id);
+            img.title = tooltip;
+            img.draggable = false;
+            img.onerror = function () {
+                this.style.display = 'none';
+                if (!el.querySelector('.slot-label')) {
+                    const fallback = document.createElement('span');
+                    fallback.className = 'slot-label';
+                    fallback.textContent = itemLabel(it.id).slice(0, 6);
+                    el.appendChild(fallback);
+                }
+            };
+            el.appendChild(img);
         } else {
-            el.classList.remove('is-filled');
-            if (label) label.textContent = '';
-            if (ph) ph.hidden = false;
+            el.classList.remove('is-filled', 'inv-equip-slot', 'is-selected');
+            el.setAttribute('draggable', 'false');
             el.title = el.getAttribute('title') || key;
+            el.innerHTML = '<span class="slot-placeholder">' + (SLOT_PLACEHOLDERS[key] || '') + '</span>';
         }
+
+        el.ondragstart = function (ev) {
+            if (!it) {
+                ev.preventDefault();
+                return;
+            }
+            onEquipDragStart(ev, key);
+        };
+        el.ondragover = onDragOver;
+        el.ondragleave = onDragLeave;
+        el.ondrop = function (ev) {
+            onEquipDrop(ev, key);
+        };
+        el.ondragend = onDragEnd;
+
+        el.onclick = function (ev) {
+            ev.preventDefault();
+            if (!key || key === 'light') return;
+            if (it) {
+                selectedEquipSlot = (selectedEquipSlot === key ? null : key);
+                selectedBag = -1;
+                renderEquipment();
+                renderBag();
+            } else if (selectedBag >= 0 && bag && bag.containerId) {
+                send(C2S.EQUIP, encodeEquip(bag.containerId, selectedBag, key));
+            }
+        };
+
+        el.ondblclick = function (ev) {
+            ev.preventDefault();
+            if (!key || key === 'light' || !it) return;
+            send(C2S.UNEQUIP, encodeUnequip(key));
+        };
+
+        el.oncontextmenu = function (ev) {
+            ev.preventDefault();
+            if (!it) return;
+            selectedEquipSlot = key;
+            renderEquipment();
+            showEquipMenu(ev.clientX, ev.clientY, it, key);
+        };
     }
     const capEl = $('activeEqCap');
     if (capEl) capEl.textContent = capVal != null ? String(capVal) : '—';
+    const soulEl = $('activeEqSoul');
+    if (soulEl) soulEl.textContent = '100';
+    const statusBar = $('activeEqStatusBar');
+    if (statusBar) statusBar.hidden = true;
 }
+
 
 function renderDialog(text, replies) {
     const panel = $('npc-dialog');
@@ -1267,7 +1609,7 @@ function showInvMenu(clientX, clientY, item, containerId, index) {
     if (!el || !wrap) return;
     el.textContent = '';
     const rows = [
-        { label: 'Look', fn: function () { fct(itemLabel(item.id)); } },
+        { label: 'Look', fn: function () { fct(formatItemTooltip(item.id, item.count)); } },
         {
             label: 'Use',
             fn: function () {
@@ -2077,13 +2419,35 @@ function initCollapsiblePanels() {
             });
         }
 
+        if (panelId && prefs.closed && prefs.closed[panelId]) {
+            sec.hidden = true;
+        }
+
+
         if (closeBtn) {
             closeBtn.addEventListener('click', function (ev) {
                 ev.preventDefault();
                 ev.stopPropagation();
                 sec.hidden = true;
+                if (panelId && typeof saveSidebarPanelsPrefs === 'function') {
+                    if (!prefs.closed) prefs.closed = {};
+                    prefs.closed[panelId] = true;
+                    saveSidebarPanelsPrefs(prefs);
+                }
+                const bar = $('sidebarPanelToggles');
+                if (bar && panelId) {
+                    const toggleBtn = bar.querySelector('[data-panel-toggle="' + panelId + '"]');
+                    if (toggleBtn) {
+                        toggleBtn.classList.remove('is-open');
+                        toggleBtn.classList.add('is-closed');
+                        toggleBtn.setAttribute('aria-pressed', 'false');
+                        const def = SIDEBAR_PANEL_TOGGLE_DEFS.find(function (d) { return d.id === panelId; });
+                        toggleBtn.title = 'Open ' + (def ? def.label : panelId);
+                    }
+                }
             });
         }
+
 
         if (handle && scroll) {
             let startY = 0;
@@ -2116,6 +2480,74 @@ function initCollapsiblePanels() {
             });
         }
     });
+}
+
+const SIDEBAR_PANEL_TOGGLE_DEFS = [
+    { id: 'backpack', btnId: 'toggleBackpackBtn', icon: 'fa-bag-shopping', label: 'Backpack' },
+    { id: 'combat', btnId: 'toggleCombatBtn', icon: 'fa-hand-fist', label: 'Combat' },
+    { id: 'skills', btnId: 'toggleSkillsBtn', icon: 'fa-chart-simple', label: 'Skills' }
+];
+
+function updateSidebarPanelToggles() {
+    const bar = $('sidebarPanelToggles');
+    if (!bar) return;
+    SIDEBAR_PANEL_TOGGLE_DEFS.forEach(function (def) {
+        const btn = bar.querySelector('[data-panel-toggle="' + def.id + '"]') || $(def.btnId);
+        const sec = document.querySelector('.panel-collapsible-section[data-panel-id="' + def.id + '"]');
+        if (!btn || !sec) return;
+        const isOpen = !sec.hidden;
+        btn.classList.toggle('is-open', isOpen);
+        btn.classList.toggle('is-closed', !isOpen);
+        btn.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+        btn.title = (isOpen ? 'Close ' : 'Open ') + def.label;
+    });
+}
+
+function openSidebarPanel(panelId) {
+    const sec = document.querySelector('.panel-collapsible-section[data-panel-id="' + panelId + '"]');
+    if (sec) {
+        sec.hidden = false;
+        const prefs = typeof loadSidebarPanelsPrefs === 'function' ? loadSidebarPanelsPrefs() : { heights: {}, collapsed: {}, closed: {} };
+        if (!prefs.closed) prefs.closed = {};
+        prefs.closed[panelId] = false;
+        if (typeof saveSidebarPanelsPrefs === 'function') {
+            saveSidebarPanelsPrefs(prefs);
+        }
+        updateSidebarPanelToggles();
+    }
+}
+
+function initSidebarPanels() {
+    const bar = $('sidebarPanelToggles');
+    if (!bar) return;
+    SIDEBAR_PANEL_TOGGLE_DEFS.forEach(function (def) {
+        let btn = bar.querySelector('[data-panel-toggle="' + def.id + '"]') || $(def.btnId);
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = def.btnId;
+            btn.className = 'btn btn-xs panel-toggle-btn';
+            btn.setAttribute('data-panel-toggle', def.id);
+            btn.setAttribute('aria-label', 'Toggle ' + def.label);
+            btn.innerHTML = '<i class="fa-solid ' + def.icon + '" aria-hidden="true"></i> <span class="panel-toggle-label"> ' + def.label + '</span>';
+            bar.appendChild(btn);
+        }
+        btn.onclick = function (ev) {
+            ev.preventDefault();
+            const sec = document.querySelector('.panel-collapsible-section[data-panel-id="' + def.id + '"]');
+            if (!sec) return;
+            const willOpen = sec.hidden;
+            sec.hidden = !willOpen;
+            const prefs = typeof loadSidebarPanelsPrefs === 'function' ? loadSidebarPanelsPrefs() : { heights: {}, collapsed: {}, closed: {} };
+            if (!prefs.closed) prefs.closed = {};
+            prefs.closed[def.id] = !willOpen;
+            if (typeof saveSidebarPanelsPrefs === 'function') {
+                saveSidebarPanelsPrefs(prefs);
+            }
+            updateSidebarPanelToggles();
+        };
+    });
+    updateSidebarPanelToggles();
 }
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -2206,20 +2638,39 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     setCombatSort(combatSort);
 
-    const fs = $('fullscreen-btn');
+    const fs = $('fullscreen-btn') || $('fullscreenToggleBtn');
     const wrap = $('gameCanvasContainer');
     if (fs && wrap) {
         fs.addEventListener('click', function () {
-            if (document.fullscreenElement) document.exitFullscreen();
-            else wrap.requestFullscreen();
+            const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+            if (fsEl) {
+                const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+                if (exit) {
+                    try {
+                        const res = exit.call(document);
+                        if (res && typeof res.catch === 'function') res.catch(function () {});
+                    } catch (e) {}
+                }
+            } else {
+                const req = wrap.requestFullscreen || wrap.webkitRequestFullscreen || wrap.mozRequestFullScreen;
+                if (req) {
+                    try {
+                        const res = req.call(wrap);
+                        if (res && typeof res.catch === 'function') res.catch(function () {});
+                    } catch (e) {}
+                }
+            }
         });
-        document.addEventListener('fullscreenchange', function () {
-            const isFs = !!document.fullscreenElement;
+        const onFsChange = function () {
+            const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
             const enterIcon = $('enterFullscreenIcon');
             const exitIcon = $('exitFullscreenIcon');
             if (enterIcon) enterIcon.style.display = isFs ? 'none' : 'block';
             if (exitIcon) exitIcon.style.display = isFs ? 'block' : 'none';
-        });
+        };
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+        document.addEventListener('mozfullscreenchange', onFsChange);
     }
 
     const settingsBtn = $('openEngineSettingsBtn');
@@ -2243,22 +2694,9 @@ document.addEventListener('DOMContentLoaded', function () {
         openCorpse = 0;
         hideFloat('loot-panel');
     });
-    const eqCard = $('activeEquipmentCard');
-    if (eqCard) {
-        eqCard.querySelectorAll('.slot-item').forEach(function (el) {
-            el.addEventListener('click', function (ev) {
-                ev.preventDefault();
-                const slot = el.getAttribute('data-slot');
-                if (!slot || slot === 'light') return;
-                if (equipment[slot]) {
-                    send(C2S.UNEQUIP, encodeUnequip(slot));
-                    return;
-                }
-                if (selectedBag < 0 || !bag.containerId) return;
-                send(C2S.EQUIP, encodeEquip(bag.containerId, selectedBag, slot));
-            });
-        });
-    }
+    initSidebarPanels();
+    renderEquipment();
+    loadItemCatalog();
     $('openBagClose') && $('openBagClose').addEventListener('click', function () {
         openBag = null;
         renderBag();

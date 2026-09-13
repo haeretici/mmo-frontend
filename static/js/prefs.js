@@ -135,20 +135,22 @@ const SIDEBAR_PANELS_KEY = 'engine.sidebarPanels';
 function loadSidebarPanelsPrefs() {
     try {
         const raw = localStorage.getItem(SIDEBAR_PANELS_KEY);
-        if (!raw) return { collapsed: {}, heights: {} };
+        if (!raw) return { closed: {}, collapsed: {}, heights: {} };
         const parsed = JSON.parse(raw);
         return {
+            closed: (parsed && typeof parsed.closed === 'object' && parsed.closed) || {},
             collapsed: (parsed && typeof parsed.collapsed === 'object' && parsed.collapsed) || {},
             heights: (parsed && typeof parsed.heights === 'object' && parsed.heights) || {}
         };
     } catch (e) {
-        return { collapsed: {}, heights: {} };
+        return { closed: {}, collapsed: {}, heights: {} };
     }
 }
 
 function saveSidebarPanelsPrefs(prefs) {
     try {
         const payload = {
+            closed: (prefs && typeof prefs.closed === 'object' && prefs.closed) || {},
             collapsed: (prefs && typeof prefs.collapsed === 'object' && prefs.collapsed) || {},
             heights: (prefs && typeof prefs.heights === 'object' && prefs.heights) || {}
         };
@@ -157,5 +159,6 @@ function saveSidebarPanelsPrefs(prefs) {
         /* ignore */
     }
 }
+
 
 deleteLegacyCharacterStore();

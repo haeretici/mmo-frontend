@@ -110,6 +110,23 @@
         return null;
     }
 
+    function resolveItemSpriteUrl(itemOrId, genre) {
+        if (!itemOrId) return null;
+        let id = '';
+        if (typeof itemOrId === 'string') {
+            id = itemOrId;
+        } else if (typeof itemOrId === 'object') {
+            if (itemOrId.sprites && itemOrId.sprites.alpha) return itemOrId.sprites.alpha;
+            if (itemOrId.sprite && typeof itemOrId.sprite === 'string') return itemOrId.sprite;
+            id = itemOrId.customSprite || itemOrId.spriteId || itemOrId.id || itemOrId.itemId || '';
+        }
+        if (!id) return null;
+        const stem = idToFileStem(id);
+        if (!stem) return null;
+        const g = String(genre || 'rpg_fantasy').replace(/[^a-z0-9_]/gi, '') || 'rpg_fantasy';
+        return '/sprites/' + g + '/equipment/alpha/' + stem + '.png';
+    }
+
     return {
         SPRITE_VARIANTS,
         DEFAULT_ENTITY_VARIANT,
@@ -119,6 +136,8 @@
         spriteUrlCandidates,
         prefetch,
         loadState,
-        getReady
+        getReady,
+        resolveItemSpriteUrl
     };
 });
+

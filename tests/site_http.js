@@ -112,6 +112,13 @@ async function main() {
             assert.strictEqual(ready.status, 200);
             assert.strictEqual(ready.json.ok, true);
 
+            const eq = await request(port, { method: 'GET', path: '/content/equipment.json' });
+            assert.strictEqual(eq.status, 200);
+            assert.ok(eq.headers['content-type'].includes('application/json'));
+            assert.ok(Array.isArray(eq.json.items));
+            assert.ok(eq.json.items.some((it) => it.id === 'iron_longsword'));
+
+
             const wsHttp = await request(port, { method: 'GET', path: '/v1/ws' });
             assert.strictEqual(wsHttp.status, 404);
 
@@ -207,8 +214,20 @@ async function main() {
             assert.ok(!playPage.text.includes('id="huntSelect"'));
             assert.ok(!playPage.text.includes('HuntDLClientDB') || playPage.text.includes('No character IndexedDB'));
 
+            assert.ok(home.text.includes('menu-item active" href="/"'));
+            assert.ok(playPage.text.includes('menu-item active" href="/play"'));
+
+            const accountPage = await request(port, { method: 'GET', path: '/account' });
+            assert.strictEqual(accountPage.status, 200);
+            assert.ok(accountPage.text.includes('menu-item active" href="/account"'));
+
+            const registerPage = await request(port, { method: 'GET', path: '/register' });
+            assert.strictEqual(registerPage.status, 200);
+            assert.ok(registerPage.text.includes('id="register-form"'));
+
             const wiki = await request(port, { method: 'GET', path: '/wiki' });
             assert.strictEqual(wiki.status, 200);
+            assert.ok(wiki.text.includes('menu-item active" href="/wiki"'));
             assert.ok(wiki.text.includes('guardian'));
         }, { gameOrigin: mock.origin });
     } finally {
