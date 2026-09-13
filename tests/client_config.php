@@ -35,9 +35,17 @@ assert(ClientConfig::gameWsUrl(['gameOrigin' => 'http://x', 'gameWsUrl' => 'ws:/
 
 $ok = Http::safeRel('/css/site.css', APP_STATIC);
 assert($ok !== null && str_starts_with(realpath($ok) ?: $ok, realpath(APP_STATIC)));
+$appCss = Http::safeRel('/css/app.css', APP_STATIC);
+assert($appCss !== null && str_starts_with(realpath($appCss) ?: $appCss, realpath(APP_STATIC)));
 assert(Http::safeRel('/css/../../config/settings.json', APP_STATIC) === null);
 assert(Http::safeRel('/.gitignore', APP_STATIC) === null);
 $index = Http::safeRel('/', APP_STATIC);
 assert($index !== null && str_ends_with($index, 'index.html'));
+
+$csp = ClientConfig::csp(['gameWsUrl' => 'ws://127.0.0.1:8081/v1/ws']);
+assert(str_contains($csp, 'https://cdn.jsdelivr.net'));
+assert(str_contains($csp, 'https://cdnjs.cloudflare.com'));
+assert(str_contains($csp, 'https://fonts.googleapis.com'));
+assert(str_contains($csp, 'https://fonts.gstatic.com'));
 
 fwrite(STDOUT, "ok client_config\n");

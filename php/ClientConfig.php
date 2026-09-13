@@ -78,7 +78,8 @@ final class ClientConfig
         return implode('; ', [
             "default-src 'none'",
             "script-src 'self'",
-            "style-src 'self'",
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com",
+            "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com data:",
             "connect-src {$connect}",
             "img-src 'self' data:",
             "base-uri 'none'",

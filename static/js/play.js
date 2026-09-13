@@ -98,6 +98,11 @@ const canvas = document.getElementById('world');
 const ctx = canvas ? canvas.getContext('2d') : null;
 const logEl = document.getElementById('log');
 const statusEl = document.getElementById('status');
+const sessionStateBadge = document.getElementById('sessionStateBadge');
+
+function setSessionBadge(text) {
+    if (sessionStateBadge) sessionStateBadge.textContent = text;
+}
 
 function $(id) { return document.getElementById(id); }
 
@@ -607,6 +612,7 @@ function setDeath(on) {
     downed = !!on;
     const el = $('death-overlay');
     if (el) el.hidden = !on;
+    setSessionBadge(on ? 'DEAD' : (self ? 'READY' : 'CONNECTING'));
 }
 
 function drawPlacement(tileX, tileY, placement, genre, targetCtx, originX, originY, tw, th) {
@@ -1780,6 +1786,7 @@ function onFrame(bytes, tokenHex) {
 }
 
 function leaveWorld() {
+    setSessionBadge('LEAVING');
     if (pingTimer) {
         clearInterval(pingTimer);
         pingTimer = 0;
@@ -1789,6 +1796,7 @@ function leaveWorld() {
 }
 
 function connect(cfg, tokenHex) {
+    setSessionBadge('CONNECTING');
     clientSeq = 1;
     others = new Map();
     corpses = new Map();
@@ -1817,6 +1825,7 @@ function connect(cfg, tokenHex) {
         onFrame(new Uint8Array(ev.data), tokenHex);
     };
     ws.onclose = function (ev) {
+        setSessionBadge('OFFLINE');
         log('disconnected ' + ev.code, ev.code === 1000 || ev.code === 4016 ? 'ok' : 'err');
     };
     ws.onerror = function () { log('socket error', 'err'); };

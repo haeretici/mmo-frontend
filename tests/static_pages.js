@@ -105,10 +105,32 @@ function main() {
     const prefsMouse = prefs.text.includes('engine.mouseControls');
     assert.ok(prefsMouse);
 
+    // Phase 2: Top Menu & Global Shell Parity
+    html.forEach((page) => {
+        assert.ok(page.includes('class="editor-header-bar"'), 'has editor-header-bar');
+        assert.ok(page.includes('class="brand"'), 'has brand');
+        assert.ok(page.includes('fa-dragon'), 'has dragon brand icon');
+        assert.ok(page.includes('class="menu-items"'), 'has menu-items');
+    });
+
+    assert.ok(playHtml.includes('editor-app-container'), 'play has editor-app-container');
+    assert.ok(playHtml.includes('editor-workspace--split'), 'play has editor-workspace--split');
+    assert.ok(playHtml.includes('id="sessionStateBadge"'), 'play has sessionStateBadge');
+    assert.ok(playHtml.includes('id="leave"'), 'play has leave button');
+
+    const indexHtml = html.find((t) => t.includes('Characters live on the server'));
+    assert.ok(indexHtml && indexHtml.includes('menu-item active" href="/"'), 'index has active Home nav');
+
+    const accountHtml = html.find((t) => t.includes('id="char-list"'));
+    assert.ok(accountHtml && accountHtml.includes('menu-item active" href="/account"'), 'account has active Characters nav');
+    assert.ok(accountHtml && accountHtml.includes('id="sessionStateBadge"'), 'account has sessionStateBadge');
+
     const wiki = html.find((t) => t.includes('Village notes'));
     assert.ok(wiki);
     assert.ok(!/loot\s*%/i.test(wiki));
     assert.ok(!/\(6,\s*12\)/.test(wiki));
+    assert.ok(wiki.includes('menu-item active" href="/wiki"'), 'wiki has active Wiki nav');
+    assert.ok(playHtml.includes('menu-item active" href="/play"'), 'play has active Play nav');
 
     console.log('ok static_pages');
 }

@@ -1,0 +1,511 @@
+// Frontend retro dark theme & HuntDL parity styling
+
+@use 'variables' as *;
+@use 'layout' as *;
+@use 'components' as *;
+@use 'game' as *;
+@use 'wiki' as *;
+
+// -------------------------------------------------------------
+// Body & Document Scroll
+// -------------------------------------------------------------
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body.play-app,
+body.is-client,
+.editor-app-container {
+  overflow: hidden;
+}
+
+.editor-app-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--bg-darkest, #{$bg-darkest});
+  overflow: hidden;
+
+  > .editor-workspace--split {
+    height: calc(100vh - var(--header-height, #{$header-height}));
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+// -------------------------------------------------------------
+// Accessibility
+// -------------------------------------------------------------
+.skip {
+  position: absolute;
+  left: -999px;
+  top: 0;
+}
+
+// -------------------------------------------------------------
+// Top Header Bar (.editor-header-bar) & Legacy Fallback (header.top)
+// -------------------------------------------------------------
+.editor-header-bar {
+  .brand {
+    text-decoration: none;
+  }
+
+  .menu-item.active {
+    color: #fff;
+    background: var(--bg-selected, #{$bg-selected});
+    box-shadow: inset 0 -2px 0 var(--accent-secondary, #{$accent-secondary});
+  }
+
+  .global-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+
+    .btn-retro {
+      text-decoration: none;
+    }
+  }
+}
+
+.btn-retro.btn-danger {
+  background: rgba(255, 123, 123, 0.15);
+  border-color: rgba(255, 123, 123, 0.45);
+  color: var(--accent-danger, #{$accent-danger});
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 123, 123, 0.28);
+    color: #fff;
+  }
+}
+header.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 0.75rem;
+  height: var(--header-height, #{$header-height});
+  min-height: var(--header-height, #{$header-height});
+  border-bottom: 1px solid var(--border-color, #{$border-color});
+  background: var(--bg-darkest, #{$bg-darkest});
+  user-select: none;
+  position: relative;
+  z-index: 100;
+
+  .mark {
+    font-family: var(--font-title, #{$font-title});
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+    background: linear-gradient(45deg, var(--accent-primary, #{$accent-primary}), var(--accent-secondary, #{$accent-secondary}));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-transform: uppercase;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent-secondary, #{$accent-secondary});
+  }
+
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+
+    a, button {
+      color: var(--text-muted, #{$text-muted});
+      cursor: pointer;
+      padding: 3px 10px;
+      border-radius: 4px;
+      transition: all 0.15s ease-in-out;
+      text-decoration: none;
+      font-family: var(--font-ui, #{$font-ui});
+      font-size: 0.75rem;
+      font-weight: 500;
+      background: transparent;
+      border: 1px solid transparent;
+      line-height: 1.2;
+
+      &:hover {
+        color: #fff;
+        background: var(--bg-light, #{$bg-light});
+      }
+
+      &[aria-current="page"], &.active {
+        color: #fff;
+        background: var(--bg-selected, #{$bg-selected});
+        box-shadow: inset 0 -2px 0 var(--accent-secondary, #{$accent-secondary});
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// Public Site Main Layout & Hero
+// -------------------------------------------------------------
+main#main,
+main:not(.play-main) {
+  flex: 1;
+  width: min(960px, calc(100% - 32px));
+  margin: 28px auto;
+}
+
+.hero {
+  padding: 24px 0 8px;
+
+  h1 {
+    font-family: var(--font-title, #{$font-title});
+    font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+    line-height: 1.2;
+    margin: 0 0 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-main, #{$text-main});
+  }
+
+  .lede {
+    color: var(--text-muted, #{$text-muted});
+    max-width: 40em;
+    margin: 0 0 20px;
+    font-size: 1rem;
+    line-height: 1.6;
+    font-family: var(--font-ui, #{$font-ui});
+  }
+}
+
+// -------------------------------------------------------------
+// Panels & Cards (Public Pages)
+// -------------------------------------------------------------
+.panel {
+  background: var(--bg-dark, #{$bg-dark});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  padding: 18px 20px;
+  margin: 0 0 18px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+
+  h2 {
+    margin: 0 0 12px;
+    font-family: var(--font-ui, #{$font-ui});
+    font-size: 0.92rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-secondary, #{$accent-secondary});
+  }
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  padding: 14px;
+  background: var(--bg-dark, #{$bg-dark});
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+
+  h3 {
+    margin: 0 0 6px;
+    font-family: var(--font-ui, #{$font-ui});
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-main, #{$text-main});
+  }
+
+  .meta {
+    color: var(--text-muted, #{$text-muted});
+    font-family: var(--font-mono, #{$font-mono});
+    font-size: 0.78rem;
+  }
+}
+
+// -------------------------------------------------------------
+// Forms & Interactive Controls
+// -------------------------------------------------------------
+label {
+  display: block;
+  margin: 10px 0;
+  color: var(--text-muted, #{$text-muted});
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: var(--font-ui, #{$font-ui});
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+select {
+  background-color: var(--bg-input, #{$bg-input});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  color: var(--text-main, #{$text-main});
+  font-family: var(--font-mono, #{$font-mono});
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  width: 100%;
+  max-width: 28rem;
+  margin-top: 4px;
+  transition: all 0.15s ease-in-out;
+  color-scheme: dark;
+
+  &:focus {
+    background-color: #000;
+    border-color: var(--accent-secondary, #{$accent-secondary});
+    box-shadow: 0 0 6px rgba(0, 242, 254, 0.3);
+    outline: none;
+    color: #fff;
+  }
+}
+
+// Global button styling
+button, .btn {
+  font-family: var(--font-ui, #{$font-ui});
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  border: 1px solid transparent;
+  line-height: 1.2;
+  text-decoration: none;
+  background: linear-gradient(135deg, rgba(199, 125, 255, 0.35), rgba(0, 242, 254, 0.25));
+  border-color: rgba(199, 125, 255, 0.45);
+  color: #fff;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.15);
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: none;
+  }
+
+  &.ghost {
+    background: var(--bg-light, #{$bg-light});
+    border-color: var(--border-color, #{$border-color});
+    color: var(--text-main, #{$text-main});
+
+    &:hover:not(:disabled) {
+      background: var(--bg-selected, #{$bg-selected});
+    }
+  }
+
+  &.danger {
+    background: rgba(255, 123, 123, 0.12);
+    border-color: rgba(255, 123, 123, 0.4);
+    color: #ff7b7b;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 123, 123, 0.22);
+      color: #fff;
+    }
+  }
+}
+
+.hint, .err, .ok, .status {
+  min-height: 1.3em;
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  font-family: var(--font-ui, #{$font-ui});
+}
+.err { color: var(--accent-danger, #{$accent-danger}); }
+.ok { color: var(--accent-success, #{$accent-success}); }
+.hint { color: var(--text-muted, #{$text-muted}); }
+
+// Wiki DL styles
+.panel.wiki {
+  dt {
+    color: var(--accent-secondary, #{$accent-secondary});
+    margin-top: 14px;
+    font-family: var(--font-ui, #{$font-ui});
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+  }
+  dd {
+    margin: 4px 0 0 0;
+    color: var(--text-muted, #{$text-muted});
+    font-size: 0.88rem;
+  }
+}
+
+footer {
+  padding: 18px 22px 28px;
+  color: var(--text-muted, #{$text-muted});
+  font-size: 0.8rem;
+  border-top: 1px solid var(--border-color, #{$border-color});
+  font-family: var(--font-ui, #{$font-ui});
+}
+
+// -------------------------------------------------------------
+// Play Viewport Compatibility Layer (.play-*)
+// Bridges current play.html markup to retro dark theme
+// -------------------------------------------------------------
+.play-shell {
+  display: flex;
+  flex-wrap: nowrap;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  height: calc(100vh - var(--header-height, #{$header-height}));
+}
+
+.play-sidebar {
+  width: 280px;
+  min-width: 260px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-color, #{$border-color});
+  background: var(--bg-dark, #{$bg-dark});
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.log {
+  font-family: var(--font-mono, #{$font-mono});
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  height: 160px;
+  overflow-y: auto;
+  background: var(--bg-input, #{$bg-input});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text-main, #{$text-main});
+}
+
+.play-sidebar-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  .log {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 80px;
+  }
+}
+
+.play-sidebar-footer {
+  padding: 8px 10px 12px;
+  border-top: 1px solid var(--border-color, #{$border-color});
+  background: var(--bg-dark, #{$bg-dark});
+}
+
+.play-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 12px;
+  overflow: auto;
+  background: var(--bg-darkest, #{$bg-darkest});
+}
+
+.play-inventory {
+  width: 185px;
+  min-width: 185px;
+  max-width: 185px;
+  background: var(--bg-dark, #{$bg-dark});
+  border-left: 1px solid var(--border-color, #{$border-color});
+  overflow-y: auto;
+  flex-shrink: 0;
+  padding: 6px 6px 12px;
+}
+
+.play-panel {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color, #{$border-color});
+
+  h2 {
+    margin: 0 0 6px;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-secondary, #{$accent-secondary});
+    font-weight: 700;
+  }
+}
+
+.play-stats,
+.play-live-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, #{$font-mono});
+
+  div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  span:first-child {
+    color: var(--text-muted, #{$text-muted});
+    font-size: 0.65rem;
+    text-transform: uppercase;
+  }
+}
+
+.play-canvas-wrap {
+  position: relative;
+  width: 100%;
+  line-height: 0;
+}
+
+canvas#world {
+  image-rendering: pixelated;
+  background: #000;
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+}
+
+.play-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted, #{$text-muted});
+  margin-bottom: 2px;
+  display: block;
+}
+
+.play-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-main, #{$text-main});
+  margin: 4px 0;
+  cursor: pointer;
+}
