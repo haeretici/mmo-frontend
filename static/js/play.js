@@ -34,7 +34,7 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, encodeCast, decodeCastFx, decodeField, decodeFieldGone, Reader } = EngineProtocol;
 const Mouse = EngineMouse;
 const Path = EnginePath;
 const Draw = EngineTileDraw;
@@ -1262,6 +1262,16 @@ function draw() {
             draw: Draw
         });
     } else {
+        fields.forEach(function (f) {
+            if ((f.z | 0) !== (z | 0)) return;
+            const sx = (f.x - camX) * TS;
+            const sy = (f.y - camY) * TS;
+            ctx.fillStyle = f.kind === 'fire' ? 'rgba(230, 80, 20, 0.45)' :
+                            f.kind === 'poison' ? 'rgba(40, 180, 40, 0.45)' :
+                            f.kind === 'energy' ? 'rgba(60, 140, 240, 0.45)' :
+                            'rgba(180, 180, 180, 0.45)';
+            ctx.fillRect(sx, sy, TS, TS);
+        });
         worldPins.forEach(function (pin) {
             if ((pin.z | 0) !== (z | 0)) return;
             const sx = (pin.x - camX) * TS + 6;
@@ -2106,8 +2116,17 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.CAST) {
-        const sourceId = r.u32(), spellId = r.str(), targetId = r.u32();
-        const cx = r.i16(), cy = r.i16(), cz = r.i8(), flags = (r.o < r.b.length ? r.u8() : 0);
+        const fx = typeof decodeCastFx === 'function' ? decodeCastFx(r.b.subarray(r.o)) : {
+            sourceId: r.u32(),
+            spellId: r.str(),
+            targetId: r.u32(),
+            x: r.i16(),
+            y: r.i16(),
+            z: r.i8(),
+            flags: (r.o < r.b.length ? r.u8() : 0)
+        };
+        const sourceId = fx.sourceId, spellId = fx.spellId, targetId = fx.targetId;
+        const cx = fx.x, cy = fx.y, cz = fx.z, flags = fx.flags;
         const caster = entityById(sourceId);
         const tgt = entityById(targetId);
         if (CombatFx) {
@@ -2194,26 +2213,48 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.FIELD) {
-        const f = {
+        const f = typeof decodeField === 'function' ? decodeField(r.b.subarray(r.o)) : {
             x: r.i16(),
             y: r.i16(),
             z: r.i8(),
             kind: r.str(),
-            flags: r.o < r.b.length ? r.u8() : 0,
-            createdAt: nowMs()
+            flags: r.o < r.b.length ? r.u8() : 0
         };
+        f.createdAt = nowMs();
         fields.set(f.x + ',' + f.y + ',' + f.z, f);
         draw();
         return;
     }
     if (opcode === S2C.FIELD_GONE) {
-        const x = r.i16();
-        const y = r.i16();
-        const z = r.i8();
-        fields.delete(x + ',' + y + ',' + z);
+        const g = typeof decodeFieldGone === 'function' ? decodeFieldGone(r.b.subarray(r.o)) : {
+            x: r.i16(),
+            y: r.i16(),
+            z: r.i8()
+        };
+        fields.delete(g.x + ',' + g.y + ',' + g.z);
         draw();
         return;
     }
+}
+
+function cast(spellId, targetId, x, y, z) {
+    if (!ws || ws.readyState !== 1) return false;
+    const sId = spellId || 'snap_jab';
+    const tgt = (targetId != null) ? (targetId | 0) : (targetEntity ? (targetEntity.id | 0) : 0);
+    const targetEnt = tgt ? entityById(tgt) : null;
+    const tx = (x != null) ? (x | 0) : (targetEnt ? targetEnt.x : (self ? self.x : 0));
+    const ty = (y != null) ? (y | 0) : (targetEnt ? targetEnt.y : (self ? self.y : 0));
+    const tz = (z != null) ? (z | 0) : (self ? self.z : 0);
+    const payload = typeof encodeCast === 'function'
+        ? encodeCast({ spellId: sId, targetId: tgt, x: tx, y: ty, z: tz })
+        : (EngineProtocol && EngineProtocol.encodeCast({ spellId: sId, targetId: tgt, x: tx, y: ty, z: tz }));
+    if (!payload) return false;
+    send(C2S.CAST, payload);
+    return true;
+}
+
+if (typeof window !== 'undefined') {
+    window.cast = cast;
 }
 
 function leaveWorld() {

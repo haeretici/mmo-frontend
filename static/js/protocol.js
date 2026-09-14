@@ -245,6 +245,53 @@
             }
             return Buffer.from(slice).toString('utf8');
         }
+        rest() {
+            return this.b.subarray(this.o);
+        }
+    }
+
+    function encodeCast({ spellId, targetId, x, y, z }) {
+        const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+        const sid = enc ? enc.encode(String(spellId || '')) : Buffer.from(String(spellId || ''), 'utf8');
+        const p = new Uint8Array(1 + sid.length + 4 + 2 + 2 + 1);
+        p[0] = sid.length & 0xff;
+        p.set(sid, 1);
+        const offset = 1 + sid.length;
+        const v = new DataView(p.buffer, p.byteOffset, p.byteLength);
+        v.setUint32(offset, (targetId || 0) >>> 0, true);
+        v.setInt16(offset + 4, (x || 0) | 0, true);
+        v.setInt16(offset + 6, (y || 0) | 0, true);
+        v.setInt8(offset + 8, (z || 0) | 0);
+        return p;
+    }
+
+    function decodeCastFx(payload) {
+        const r = new Reader(payload);
+        return {
+            sourceId: r.u32(),
+            spellId: r.str(),
+            targetId: r.u32(),
+            x: r.i16(),
+            y: r.i16(),
+            z: r.i8(),
+            flags: r.rest().length ? r.u8() : 0
+        };
+    }
+
+    function decodeField(payload) {
+        const r = new Reader(payload);
+        return {
+            x: r.i16(),
+            y: r.i16(),
+            z: r.i8(),
+            kind: r.str(),
+            flags: r.rest().length ? r.u8() : 0
+        };
+    }
+
+    function decodeFieldGone(payload) {
+        const r = new Reader(payload);
+        return { x: r.i16(), y: r.i16(), z: r.i8() };
     }
 
     return {
@@ -265,6 +312,10 @@
         encodeEquip,
         encodeUnequip,
         encodeMoveItem,
+        encodeCast,
+        decodeCastFx,
+        decodeField,
+        decodeFieldGone,
         Reader
     };
 });

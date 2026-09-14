@@ -76,6 +76,41 @@ function main() {
         assert.strictEqual(decodedMove.to.kind, 'equipment');
         assert.strictEqual(decodedMove.to.slot, 'head');
         assert.strictEqual(decodedMove.count, 5);
+
+        // Cast parity: frontend encoder -> server decoder
+        const castBuf = fe.encodeCast({ spellId: 'snap_jab', targetId: 101, x: 12, y: 15, z: 6 });
+        const srvDecodedCast = messages.decodeCast(castBuf);
+        assert.strictEqual(srvDecodedCast.spellId, 'snap_jab');
+        assert.strictEqual(srvDecodedCast.targetId, 101);
+        assert.strictEqual(srvDecodedCast.x, 12);
+        assert.strictEqual(srvDecodedCast.y, 15);
+        assert.strictEqual(srvDecodedCast.z, 6);
+
+        // CastFx parity: server encoder -> frontend decoder
+        const srvFxBuf = messages.encodeCastFx({ sourceId: 1, spellId: 'snap_jab', targetId: 2, x: 10, y: 11, z: 7, flags: 0 });
+        const feDecodedFx = fe.decodeCastFx(srvFxBuf);
+        assert.strictEqual(feDecodedFx.sourceId, 1);
+        assert.strictEqual(feDecodedFx.spellId, 'snap_jab');
+        assert.strictEqual(feDecodedFx.targetId, 2);
+        assert.strictEqual(feDecodedFx.x, 10);
+        assert.strictEqual(feDecodedFx.y, 11);
+        assert.strictEqual(feDecodedFx.z, 7);
+
+        // Field parity: server encoder -> frontend decoder
+        const srvFieldBuf = messages.encodeField({ x: 14, y: 16, z: 7, kind: 'fire', isObstacle: false, source: 'player' });
+        const feDecodedField = fe.decodeField(srvFieldBuf);
+        assert.strictEqual(feDecodedField.x, 14);
+        assert.strictEqual(feDecodedField.y, 16);
+        assert.strictEqual(feDecodedField.z, 7);
+        assert.strictEqual(feDecodedField.kind, 'fire');
+        assert.strictEqual(feDecodedField.flags, 2);
+
+        // FieldGone parity: server encoder -> frontend decoder
+        const srvGoneBuf = messages.encodeFieldGone(14, 16, 7);
+        const feDecodedGone = fe.decodeFieldGone(srvGoneBuf);
+        assert.strictEqual(feDecodedGone.x, 14);
+        assert.strictEqual(feDecodedGone.y, 16);
+        assert.strictEqual(feDecodedGone.z, 7);
     }
 
     console.log('ok protocol');
