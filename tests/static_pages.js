@@ -36,9 +36,11 @@ function main() {
     assert.ok(prefs, 'prefs.js');
     assert.ok(prefs.text.includes('deleteDatabase(LEGACY_CHAR_DB)') || prefs.text.includes("deleteDatabase('HuntDLClientDB')"));
     assert.ok(prefs.text.includes('HuntDLClientDB'));
-    assert.ok(!/indexedDB\.open\s*\(/.test(prefs.text));
-    assert.ok(!/createObjectStore/.test(all));
-    assert.ok(!/indexedDB\.open\s*\(/.test(all));
+    assert.ok(prefs.text.includes('PREFS_DB_NAME') || prefs.text.includes("'engine.prefs'"));
+    assert.ok(prefs.text.includes('ACTION_BARS_STORE') || prefs.text.includes("'actionBars'"));
+    assert.ok(prefs.text.includes('indexedDB.open(PREFS_DB_NAME') || prefs.text.includes("indexedDB.open('engine.prefs'"));
+    assert.ok(!/indexedDB\.open\s*\(\s*['"]HuntDLClientDB/.test(all));
+    assert.ok(!/createObjectStore\s*\(\s*['"]characters['"]/.test(all));
 
     assert.ok(prefs.text.includes('engine.lastEmail'));
     assert.ok(prefs.text.includes('engine.playHandoff'));
@@ -86,11 +88,18 @@ function main() {
     assert.ok(play.text.includes('EngineSpritePresentation'));
     assert.ok(playHtml.includes('combat_fx.js'));
     assert.ok(play.text.includes('EngineCombatFx'));
+    assert.ok(play.text.includes("document.addEventListener('contextmenu'"), 'play binds contextmenu on document');
+    assert.ok(play.text.includes("closest('.play-shell')"), 'native context menu suppressed on play-shell');
+    assert.ok(/closest\('\.play-shell'\)[\s\S]{0,80},\s*true\s*\)/.test(play.text), 'play-shell contextmenu is capture');
     const keyWalkJs = js.find((f) => f.name === 'js/keyboard_walk.js');
     assert.ok(keyWalkJs);
     assert.ok(keyWalkJs.text.includes('AUTO_REPEAT_DELAY_MS'));
     assert.ok(play.text.includes('keyWalk.keyDown'));
     assert.ok(play.text.includes("addEventListener('keyup'"));
+    assert.ok(!/REASON\.BLOCKED\s*&&\s*walkDest/.test(play.text),
+        'REJECT BLOCKED must clear keyboard walkBusy even without click-to-walk dest');
+    assert.ok(play.text.includes('t != null && !isWalkable(nx, ny)'),
+        'keyboard MOVE_STEP skips known blocked dest so walkBusy is not locked');
     assert.ok(playHtml.includes('id="npc-dialog"'));
     assert.ok(playHtml.includes('id="death-overlay"'));
     assert.ok(playHtml.includes('value="1" selected'));
@@ -140,6 +149,24 @@ function main() {
     assert.ok(playHtml.includes('action-bars-layout'), 'play has action-bars-layout');
     assert.ok(playHtml.includes('actionBarDockTop'), 'play has actionBarDockTop');
     assert.ok(playHtml.includes('actionBarDockBottom'), 'play has actionBarDockBottom');
+    assert.ok(playHtml.includes('/js/action_bar_assign.js'), 'play loads action_bar_assign.js');
+    assert.ok(playHtml.includes('/js/action_bars.js'), 'play loads action_bars.js');
+    const actionAssign = js.find((f) => f.name === 'js/action_bar_assign.js');
+    assert.ok(actionAssign, 'action_bar_assign.js');
+    assert.ok(actionAssign.text.includes('filterSpells'));
+    assert.ok(actionAssign.text.includes('Assign Spell'));
+    assert.ok(actionAssign.text.includes('openAssignMultiModal'));
+    assert.ok(!actionAssign.text.includes('SET_HOTKEYS'));
+    const actionBars = js.find((f) => f.name === 'js/action_bars.js');
+    assert.ok(actionBars, 'action_bars.js');
+    assert.ok(actionBars.text.includes('F1'));
+    assert.ok(actionBars.text.includes('cdTicks'));
+    assert.ok(actionBars.text.includes('seedBar1') || actionBars.text.includes('onEnter'));
+    assert.ok(!actionBars.text.includes('indexedDB'), 'IDB stays in prefs.js');
+    assert.ok(!actionBars.text.includes('SET_HOTKEYS'));
+    assert.ok(!actionBars.text.includes('Date.now'), 'CD remaining is not Date.now');
+    assert.ok(!actionBars.text.includes('requestAnimationFrame'), 'CD wipe is not per-frame');
+    assert.ok(actionBars.text.includes('POLL_MS_CD') || /100/.test(actionBars.text));
     assert.ok(playHtml.includes('enterFullscreenIcon'), 'play has enterFullscreenIcon');
     assert.ok(playHtml.includes('exitFullscreenIcon'), 'play has exitFullscreenIcon');
     assert.ok(playHtml.includes('game-live-section'), 'play has game-live-section');

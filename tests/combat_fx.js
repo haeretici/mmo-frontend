@@ -25,7 +25,10 @@ function createMockContext() {
         font: '',
         textAlign: '',
         textBaseline: '',
-        globalAlpha: 1
+        globalAlpha: 1,
+        translate: (x, y) => calls.push({ op: 'translate', x, y }),
+        rotate: (a) => calls.push({ op: 'rotate', a }),
+        drawImage: (img, x, y, w, h) => calls.push({ op: 'drawImage', x, y, w, h })
     };
 }
 
@@ -71,6 +74,13 @@ function main() {
 
     // 4. Render FCT on canvas
     const ctx = createMockContext();
+    fx.pushFct({
+        x: 12, y: 11, z: 6, text: 'Need directions?', color: '#fde68a', life: 1.6
+    });
+    assert.strictEqual(fx.getFctEntries()[0].text, 'Need directions?');
+    assert.strictEqual(fx.getFctEntries()[0].life, 1.6);
+    fx.clear();
+
     fx.pushFct({ x: 10, y: 10, z: 0, text: '99!', color: '#fbbf24', isCrit: true });
     fx.render(ctx, { camX: 8, camY: 8, floorZ: 0, tw: 32, th: 32, nowSec: 100 });
 
@@ -103,6 +113,26 @@ function main() {
 
     fx.update(1.0); // All default fx have life < 0.5s -> all expired
     assert.strictEqual(fx.getFxEntries().length, 0);
+
+    assert.ok(Math.abs(CombatFx.AMMO_ART_TIP_ANGLE - (-Math.PI / 4)) < 1e-9);
+    const east = CombatFx.projectileRotation(10, 0);
+    assert.ok(Math.abs(east - (0 - CombatFx.AMMO_ART_TIP_ANGLE)) < 1e-9);
+
+    const ammo = CombatFx.createCombatFx();
+    const ammoImg = { naturalWidth: 32, naturalHeight: 16 };
+    const sprites = {
+        prefetch: function () {},
+        getReady: function () { return ammoImg; },
+        getCachedImageSize: function (img) { return { iw: img.naturalWidth, ih: img.naturalHeight }; }
+    };
+    ammo.pushProjectile({
+        x0: 0, y0: 0, x1: 4, y1: 0, z: 0, color: '#ffffff',
+        spriteId: 'wooden_arrow', life: 1
+    });
+    ctx.calls.length = 0;
+    ammo.render(ctx, { camX: 0, camY: 0, floorZ: 0, tw: 32, th: 32, nowSec: 300, sprites: sprites });
+    assert.ok(ctx.calls.some((c) => c.op === 'rotate'), 'ammo projectile rotates');
+    assert.ok(ctx.calls.some((c) => c.op === 'drawImage'), 'ammo projectile draws sprite');
 
     console.log('ok combat_fx');
 }

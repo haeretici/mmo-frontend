@@ -18,6 +18,201 @@
     const TARGET_SHADOW_R_DARK = 0xaa;
     const TARGET_SHADOW_R_BRIGHT = 0xff;
     const DEFAULT_JUMP_HEIGHT = 0.08;
+    const OPAQUE_ALPHA_MIN = 24;
+    const FOOT_BAND_FRAC = 0.33;
+
+    const _auraCache = new Map();
+    const _footCache = new Map();
+    const _imgIds = typeof WeakMap === 'function' ? new WeakMap() : null;
+    let _imgIdSeq = 0;
+
+    function _imageCacheId(img) {
+        if (!img || typeof img !== 'object') return 'null';
+        if (_imgIds && _imgIds.has(img)) return _imgIds.get(img);
+        let id;
+        if (img.src) id = String(img.src);
+        else if (img._src) id = String(img._src);
+        else {
+            _imgIdSeq += 1;
+            id = 'img#' + _imgIdSeq;
+        }
+        if (_imgIds) _imgIds.set(img, id);
+        return id;
+    }
+
+    function _allocAuraCanvas(w, h) {
+        const ww = Math.max(1, w | 0);
+        const hh = Math.max(1, h | 0);
+        if (typeof OffscreenCanvas !== 'undefined') {
+            try {
+                const canvas = new OffscreenCanvas(ww, hh);
+                const ctx = canvas.getContext('2d');
+                if (ctx) return { canvas: canvas, ctx: ctx };
+            } catch (_e) { /* fall through */ }
+        }
+        if (typeof document !== 'undefined' && document.createElement) {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = ww;
+                canvas.height = hh;
+                const ctx = canvas.getContext('2d');
+                if (ctx) return { canvas: canvas, ctx: ctx };
+            } catch (_e) { /* fall through */ }
+        }
+        return null;
+    }
+
+    function _imageNaturalSize(img) {
+        if (!img) return null;
+        const iw =
+            img._spriteIw > 0 ? Number(img._spriteIw)
+            : img.naturalWidth != null && img.naturalWidth > 0 ? Number(img.naturalWidth)
+            : img.width != null ? Number(img.width) : 0;
+        const ih =
+            img._spriteIh > 0 ? Number(img._spriteIh)
+            : img.naturalHeight != null && img.naturalHeight > 0 ? Number(img.naturalHeight)
+            : img.height != null ? Number(img.height) : 0;
+        if (!(iw > 0) || !(ih > 0)) return null;
+        return { iw: iw | 0, ih: ih | 0 };
+    }
+
+    function buildSpriteOpaqueFoot(img) {
+        const size = _imageNaturalSize(img);
+        if (!size) return null;
+        const iw = size.iw;
+        const ih = size.ih;
+        if (iw * ih > 512 * 512) return null;
+        const alloc = _allocAuraCanvas(iw, ih);
+        if (!alloc || typeof alloc.ctx.getImageData !== 'function') return null;
+        const ctx = alloc.ctx;
+        try {
+            ctx.clearRect(0, 0, iw, ih);
+            ctx.drawImage(img, 0, 0, iw, ih);
+            const imageData = ctx.getImageData(0, 0, iw, ih);
+            const src = imageData.data;
+            let top = -1;
+            let bottom = -1;
+            for (let y = 0; y < ih; y++) {
+                const row = y * iw * 4;
+                for (let x = 0; x < iw; x++) {
+                    if (src[row + x * 4 + 3] > OPAQUE_ALPHA_MIN) {
+                        if (top < 0) top = y;
+                        bottom = y;
+                        break;
+                    }
+                }
+            }
+            if (bottom < 0 || top < 0) return null;
+            const opaqueH = bottom - top + 1;
+            const bandH = Math.max(1, Math.round(opaqueH * FOOT_BAND_FRAC));
+            const y0 = bottom - bandH + 1;
+            let sumX = 0;
+            let count = 0;
+            for (let y = y0; y <= bottom; y++) {
+                const row = y * iw * 4;
+                for (let x = 0; x < iw; x++) {
+                    if (src[row + x * 4 + 3] > OPAQUE_ALPHA_MIN) {
+                        sumX += x;
+                        count += 1;
+                    }
+                }
+            }
+            const footCx = count > 0 ? sumX / count : iw / 2;
+            return { iw: iw, ih: ih, top: top, bottom: bottom, footCx: footCx };
+        } catch (_e) {
+            return null;
+        }
+    }
+
+    function getSpriteOpaqueFoot(img) {
+        if (!img) return null;
+        const key = _imageCacheId(img);
+        if (_footCache.has(key)) return _footCache.get(key) || null;
+        const built = buildSpriteOpaqueFoot(img);
+        _footCache.set(key, built);
+        return built;
+    }
+
+    function clearSpriteOpaqueFootCache() {
+        _footCache.clear();
+    }
+
+    function buildRarityAuraSprite(img, tier) {
+        const cfg = RARITY_AURA[tier];
+        if (!cfg || !img) return null;
+        const size = _imageNaturalSize(img);
+        if (!size) return null;
+        const iw = size.iw;
+        const ih = size.ih;
+        const radius = Math.max(1, Math.min(6, cfg.radius | 0));
+        const pad = radius + 1;
+        const cw = iw + pad * 2;
+        const ch = ih + pad * 2;
+        if (cw * ch > 512 * 512) return null;
+        const alloc = _allocAuraCanvas(cw, ch);
+        if (!alloc || typeof alloc.ctx.getImageData !== 'function') return null;
+        const canvas = alloc.canvas;
+        const ctx = alloc.ctx;
+        try {
+            ctx.clearRect(0, 0, cw, ch);
+            ctx.drawImage(img, pad, pad, iw, ih);
+            const imageData = ctx.getImageData(0, 0, cw, ch);
+            const src = imageData.data;
+            const n = cw * ch;
+            const opaque = new Uint8Array(n);
+            for (let i = 0, p = 3; i < n; i++, p += 4) {
+                opaque[i] = src[p] > 24 ? 1 : 0;
+            }
+            const dil = new Uint8Array(n);
+            const r2 = radius * radius;
+            for (let y = 0; y < ch; y++) {
+                for (let x = 0; x < cw; x++) {
+                    const idx = y * cw + x;
+                    if (!opaque[idx]) continue;
+                    for (let dy = -radius; dy <= radius; dy++) {
+                        const ny = y + dy;
+                        if (ny < 0 || ny >= ch) continue;
+                        const dy2 = dy * dy;
+                        for (let dx = -radius; dx <= radius; dx++) {
+                            if (dx * dx + dy2 > r2) continue;
+                            const nx = x + dx;
+                            if (nx < 0 || nx >= cw) continue;
+                            dil[ny * cw + nx] = 1;
+                        }
+                    }
+                }
+            }
+            const out = ctx.createImageData(cw, ch);
+            const od = out.data;
+            const cr = cfg.r;
+            const cg = cfg.g;
+            const cb = cfg.b;
+            for (let i = 0, p = 0; i < n; i++, p += 4) {
+                if (!dil[i] || opaque[i]) continue;
+                od[p] = cr;
+                od[p + 1] = cg;
+                od[p + 2] = cb;
+                od[p + 3] = 230;
+            }
+            ctx.putImageData(out, 0, 0);
+        } catch (_e) {
+            return null;
+        }
+        return { canvas: canvas, pad: pad, iw: iw, ih: ih, cw: cw, ch: ch };
+    }
+
+    function getRarityAuraSprite(img, tier) {
+        if (!img || !RARITY_AURA[tier]) return null;
+        const key = _imageCacheId(img) + '|' + tier;
+        if (_auraCache.has(key)) return _auraCache.get(key) || null;
+        const built = buildRarityAuraSprite(img, tier);
+        _auraCache.set(key, built);
+        return built;
+    }
+
+    function clearRarityAuraCache() {
+        _auraCache.clear();
+    }
 
     const RARITY_AURA = Object.freeze({
         rare: { color: '#3ddc84', r: 61, g: 220, b: 132, radius: 2, alpha: 0.9 },
@@ -166,8 +361,20 @@
         const sRaw = scale != null ? Number(scale) : 1;
         const sLayout = Number.isFinite(sRaw) && sRaw > 0 ? sRaw : 1;
         const sRad = Math.min(1.6, sLayout);
-        const cx = tilePxX + tw / 2;
-        const cy = tilePxY + th - th * 0.1;
+        let cx = tilePxX + tw / 2;
+        let cy = tilePxY + th - th * 0.1;
+
+        const foot = img ? getSpriteOpaqueFoot(img) : null;
+        if (foot && foot.ih > 0 && foot.iw > 0) {
+            const scaledH = th * sLayout;
+            const scaledW = foot.iw * (scaledH / foot.ih);
+            const px = tilePxX + tw / 2 - scaledW / 2;
+            const py = tilePxY + th - scaledH;
+            cy = py + ((foot.bottom + 1) / foot.ih) * scaledH - th * 0.04;
+            let localCx = foot.footCx;
+            if (flipH) localCx = foot.iw - 1 - localCx;
+            cx = px + ((localCx + 0.5) / foot.iw) * scaledW;
+        }
 
         const highlight = !!(opts && opts.combatTargetHighlight);
         const hover = !!(opts && opts.hoverHighlight);
@@ -298,6 +505,7 @@
             : (typeof performance !== 'undefined' && performance.now ? performance.now() / 1000 : Date.now() / 1000);
         const pulse = 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(t * 3.2));
         const alpha = Math.min(1, cfg.alpha * pulse);
+        const baked = img ? getRarityAuraSprite(img, tier) : null;
 
         ctx.save();
         if (flipH) {
@@ -307,13 +515,27 @@
             ctx.translate(-cx, 0);
         }
         ctx.globalAlpha = alpha;
-        ctx.strokeStyle = cfg.color;
         ctx.shadowColor = cfg.color;
-        ctx.shadowBlur = Math.max(3, Math.round(5 * (layout.scale || 1)));
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
-        ctx.lineWidth = cfg.radius || 2;
-        ctx.strokeRect(dx0 - 1, dy0 - 1, dw + 2, dh + 2);
+        if (baked && baked.canvas && typeof ctx.drawImage === 'function' && baked.iw > 0) {
+            const sx = dw / baked.iw;
+            const sy = dh / baked.ih;
+            const adx = Math.floor((layout.px != null ? layout.px : layout.dx) - baked.pad * sx);
+            const ady = Math.floor((layout.py != null ? layout.py : layout.dy) - baked.pad * sy);
+            const adw = Math.max(1, Math.round(baked.cw * sx));
+            const adh = Math.max(1, Math.round(baked.ch * sy));
+            ctx.shadowBlur = Math.max(2, Math.round(4 * (layout.scale || 1)));
+            ctx.drawImage(baked.canvas, adx, ady, adw, adh);
+        } else if (img && typeof ctx.drawImage === 'function') {
+            ctx.shadowBlur = Math.max(4, Math.round(8 * (layout.scale || 1)));
+            ctx.drawImage(img, dx0, dy0, dw, dh);
+        } else {
+            ctx.strokeStyle = cfg.color;
+            ctx.shadowBlur = Math.max(3, Math.round(5 * (layout.scale || 1)));
+            ctx.lineWidth = cfg.radius || 2;
+            ctx.strokeRect(dx0 - 1, dy0 - 1, dw + 2, dh + 2);
+        }
         ctx.restore();
     }
 
@@ -328,15 +550,23 @@
         TARGET_SHADOW_R_DARK,
         TARGET_SHADOW_R_BRIGHT,
         DEFAULT_JUMP_HEIGHT,
+        OPAQUE_ALPHA_MIN,
+        FOOT_BAND_FRAC,
         RARITY_AURA,
         RARITY_TIER_RANK,
         stepBobOffsetPx,
         beginHitFeedback,
         hitFlashStrength,
         getHitRecoilOffset,
+        buildSpriteOpaqueFoot,
+        getSpriteOpaqueFoot,
+        clearSpriteOpaqueFootCache,
         drawEntityShadow,
         drawSpriteHitFlash,
         resolveEntityRarityTier,
+        buildRarityAuraSprite,
+        getRarityAuraSprite,
+        clearRarityAuraCache,
         drawEntityRarityAura
     };
 });

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Orthogonal BFS on the visible viewport. Server still validates each MOVE_STEP.
+ * Orthogonal BFS on the visible viewport. Client sends MOVE_PATH dirs; server validates occupancy per step.
  */
 (function (root, factory) {
     const api = factory();

@@ -118,6 +118,42 @@ async function main() {
             assert.ok(Array.isArray(eq.json.items));
             assert.ok(eq.json.items.some((it) => it.id === 'iron_longsword'));
 
+            const spellsUi = await request(port, { method: 'GET', path: '/content/spells-ui.json' });
+            assert.strictEqual(spellsUi.status, 200);
+            assert.ok(Array.isArray(spellsUi.json.spells));
+            const jab = spellsUi.json.spells.find((s) => s.id === 'snap_jab');
+            assert.ok(jab, 'spells-ui has snap_jab');
+            assert.strictEqual(jab.cooldowns.primary.attack, 2);
+            const patch = spellsUi.json.spells.find((s) => s.id === 'magic_patch');
+            assert.ok(patch, 'spells-ui has magic_patch');
+            assert.strictEqual(patch.selfTarget, true);
+            assert.strictEqual(patch.kind, 'heal');
+            const light = spellsUi.json.spells.find((s) => s.id === 'heal_light');
+            assert.ok(light);
+            assert.strictEqual(light.selfTarget, true);
+            const friend = spellsUi.json.spells.find((s) => s.id === 'heal_friend');
+            assert.ok(friend);
+            assert.strictEqual(friend.allowOnSelf, false);
+            assert.notStrictEqual(friend.selfTarget, true);
+            assert.strictEqual(jab.powerCurve, undefined);
+            assert.strictEqual(jab.basePower, undefined);
+            assert.strictEqual(jab.damageAmplitude, undefined);
+            const uiText = JSON.stringify(spellsUi.json);
+            assert.ok(!uiText.includes('powerCurve'));
+            assert.ok(!uiText.includes('basePower'));
+            assert.ok(!uiText.includes('damageAmplitude'));
+
+            const classesUi = await request(port, { method: 'GET', path: '/content/classes-ui.json' });
+            assert.strictEqual(classesUi.status, 200);
+            assert.ok(Array.isArray(classesUi.json.classes));
+            const mystic = classesUi.json.classes.find((c) => c.id === 'mystic');
+            assert.ok(mystic, 'classes-ui has mystic');
+            assert.strictEqual(mystic.spells[0], 'snap_jab');
+            assert.strictEqual(mystic.critChance, undefined);
+            assert.strictEqual(mystic.baseHp, undefined);
+            const classText = JSON.stringify(classesUi.json);
+            assert.ok(!classText.includes('critChance'));
+            assert.ok(!classText.includes('baseHp'));
 
             const wsHttp = await request(port, { method: 'GET', path: '/v1/ws' });
             assert.strictEqual(wsHttp.status, 404);

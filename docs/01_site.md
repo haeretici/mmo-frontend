@@ -5,7 +5,7 @@ Public HTTPS (or local `http`) account origin. **PHP**. Same-origin `/v1/*` is *
 ## Do not
 
 - Node `http.createServer` in this folder.
-- Game tick, occupancy, combat, loot rolls.
+- Game tick, occupancy, combat, loot rolls. Player path and AoE-center ranking stay in the tab (`MOVE_PATH` dirs / CAST tile).
 - IndexedDB `characters` store. Client 10 s save.
 - Token in the URL. Passwords on the game socket.
 - Proxy WebSocket `/v1/ws`.
@@ -67,4 +67,4 @@ Boot fails if `proxyApi` and `gameOrigin` is not `http://` or `https://`.
 
 ## Remaining
 
-Play is `http://www.example.com/play` (same-origin sessionStorage). Visual hybrid + sprites are this origin (`/visual`, `/sprites`). Do not extract a play vhost until asked. **Later Symfony** on www — do not start until asked. Do not add a wiki loot table.
+Play is `http://www.example.com/play` (same-origin sessionStorage). Visual hybrid + sprites are this origin (`/visual`, `/sprites`). Action bars: [03](./03_action_bars.md). Do not extract a play vhost until asked. **Later Symfony** on www — do not start until asked. Do not add a wiki loot table.

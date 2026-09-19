@@ -73,6 +73,15 @@ if (is_file($live . '/maps/firstlight_isle/hybrid/floor-06/map.json')) {
     assert($plaza['mapCols'] === 225);
     assert($plaza['genre'] === 'rpg_fantasy');
     assert(!array_key_exists('spawns', $plaza));
+    $water = null;
+    foreach ($plaza['palette'] as $slot) {
+        if (is_array($slot) && ($slot['catalogId'] ?? '') === 'ref_water_fill') {
+            $water = $slot;
+            break;
+        }
+    }
+    assert($water !== null, 'plaza palette includes ref_water_fill');
+    assert(isset($water['anim']['frames']) && (int) $water['anim']['frames'] > 1, 'water tiles carry cycling anim');
     $bytes = 0;
     foreach ($plaza['layers'] as $b64) {
         $bytes += strlen(base64_decode($b64, true) ?: '');

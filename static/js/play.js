@@ -34,7 +34,7 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, encodeCast, decodeCastFx, decodeField, decodeFieldGone, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, encodeMovePath, encodeCast, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, Reader } = EngineProtocol;
 const Mouse = EngineMouse;
 const Path = EnginePath;
 const Draw = EngineTileDraw;
@@ -79,8 +79,9 @@ let selectedOpenBag = -1;
 let selectedEquipSlot = null;
 let walkDest = null;
 let walkBusy = false;
-let walkRetry = 0;
+let walkQueued = false;
 let pendingAfterWalk = null;
+let chaseWalk = false;
 const keyWalk = KeyWalk.create();
 let buttonsDown = { left: false, right: false };
 let cancelNext = false;
@@ -125,6 +126,13 @@ function visualPos(ent) {
         };
     }
     return { x: Number(ent.x) || 0, y: Number(ent.y) || 0, z: ent.z };
+}
+
+function applyDirFacing(ent, dir) {
+    if (!ent || dir == null) return;
+    ent.dir = dir;
+    if ((dir | 0) === 3) ent.facing = -1;
+    else if ((dir | 0) === 1) ent.facing = 1;
 }
 
 function faceTowardTarget(ent, target) {
@@ -207,14 +215,39 @@ function log(msg, cls) {
     logEl.scrollTop = logEl.scrollHeight;
 }
 
+function hideHudFct() {
+    const el = $('fct');
+    if (!el) return;
+    el.hidden = true;
+    if (fctTimer) {
+        clearTimeout(fctTimer);
+        fctTimer = null;
+    }
+}
+
 function fct(text) {
+    const msg = text == null ? '' : String(text);
+    if (!msg) return;
+    log(msg);
+    // System float: canvas FCT over the player (watch-mode emitSystemFloat).
+    if (self && CombatFx && typeof CombatFx.pushFct === 'function') {
+        hideHudFct();
+        CombatFx.pushFct({
+            x: self.x,
+            y: self.y,
+            z: self.z,
+            text: msg,
+            color: '#f59e0b',
+            life: 1.1
+        });
+        return;
+    }
     const el = $('fct');
     if (!el) return;
     el.hidden = false;
-    el.textContent = text;
+    el.textContent = msg;
     if (fctTimer) clearTimeout(fctTimer);
     fctTimer = setTimeout(function () { el.hidden = true; }, 1800);
-    log(text);
 }
 
 function send(opcode, payload) {
@@ -371,19 +404,15 @@ function renderCombat() {
 
         d.addEventListener('click', function (ev) {
             ev.preventDefault();
-            send(C2S.SET_TARGET, u32buf(row.id));
-            targetId = row.id;
-            renderCombat();
+            selectTarget(row.id);
         });
         d.addEventListener('contextmenu', function (ev) {
             ev.preventDefault();
-            send(C2S.SET_TARGET, u32buf(row.id));
-            send(C2S.SET_AUTO_CHASE, Uint8Array.of(1));
-            targetId = row.id;
             autoChase = true;
+            saveAutoChase(true);
             const box = $('auto-chase');
             if (box) box.checked = true;
-            renderCombat();
+            selectTarget(row.id);
         });
         d.addEventListener('mouseenter', function () {
             hoveredEntityId = row.id;
@@ -606,7 +635,22 @@ function onDragLeave(ev) {
     ev.currentTarget.classList.remove('drag-over');
 }
 
-function onDragEnd() {
+function onDragEnd(ev) {
+    if (currentDrag && currentDrag.item && currentDrag.item.id && ev) {
+        const under = typeof document !== 'undefined'
+            ? document.elementFromPoint(ev.clientX, ev.clientY)
+            : null;
+        if (under && typeof EngineActionBars !== 'undefined'
+            && typeof EngineActionBars.tryHandleSlotDrop === 'function') {
+            if (EngineActionBars.tryHandleSlotDrop(under, currentDrag.item.id)) {
+                currentDrag = null;
+                document.querySelectorAll('.is-dragging, .drag-over').forEach(function (el) {
+                    el.classList.remove('is-dragging', 'drag-over');
+                });
+                return;
+            }
+        }
+    }
     currentDrag = null;
     document.querySelectorAll('.is-dragging, .drag-over').forEach(function (el) {
         el.classList.remove('is-dragging', 'drag-over');
@@ -629,6 +673,112 @@ function onEquipDrop(ev, targetSlotKey) {
     onDragEnd();
 }
 
+function resolveStackMoveAmount(opts) {
+    const o = opts || {};
+    let count = Math.floor(Number(o.count));
+    if (!Number.isFinite(count) || count < 1) count = 1;
+    if (count <= 1) return { kind: 'amount', amount: 1 };
+    if (o.shift) return { kind: 'amount', amount: 1 };
+    const ctrl = !!o.ctrl;
+    const moveStack = !!o.moveStack;
+    if (ctrl !== moveStack) return { kind: 'amount', amount: count };
+    return { kind: 'modal', max: count };
+}
+
+function hideStackSplitModal() {
+    const el = $('inv-stack-split');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+
+function showStackSplitModal(opts) {
+    hideStackSplitModal();
+    if (typeof document === 'undefined') return;
+    const max = Math.max(1, Math.floor(Number(opts.max) || 1));
+    const el = document.createElement('div');
+    el.id = 'inv-stack-split';
+    el.className = 'inv-stack-split-modal';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Move amount');
+
+    const title = document.createElement('div');
+    title.className = 'inv-stack-split-title';
+    title.textContent = opts.label || itemLabel(opts.item && opts.item.id) || 'Move';
+
+    const row = document.createElement('div');
+    row.className = 'inv-stack-split-row';
+    const amountEl = document.createElement('span');
+    amountEl.className = 'inv-stack-split-amount';
+    amountEl.textContent = String(max);
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '1';
+    slider.max = String(max);
+    slider.value = String(max);
+    slider.className = 'inv-stack-split-slider';
+    slider.addEventListener('input', function () {
+        amountEl.textContent = String(slider.value);
+    });
+    row.appendChild(slider);
+    row.appendChild(amountEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'inv-stack-split-actions';
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.className = 'inv-stack-split-btn inv-stack-split-btn--ok';
+    okBtn.textContent = 'Ok';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'inv-stack-split-btn';
+    cancelBtn.textContent = 'Cancel';
+    function finish(confirm) {
+        const n = Math.max(1, Math.min(max, Math.floor(Number(slider.value) || 1)));
+        hideStackSplitModal();
+        if (confirm && typeof opts.onConfirm === 'function') opts.onConfirm(n);
+        else if (!confirm && typeof opts.onCancel === 'function') opts.onCancel();
+    }
+    okBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        finish(true);
+    });
+    cancelBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        finish(false);
+    });
+    actions.appendChild(okBtn);
+    actions.appendChild(cancelBtn);
+    el.appendChild(title);
+    el.appendChild(row);
+    el.appendChild(actions);
+    const host = typeof ctxMenuHost === 'function' ? ctxMenuHost() : document.body;
+    host.appendChild(el);
+    try { slider.focus(); } catch (_e) { /* ignore */ }
+}
+
+function moveItemWithSplit(from, to, item, ev) {
+    const count = item && item.count > 1 ? (item.count | 0) : 1;
+    const decision = resolveStackMoveAmount({
+        count: count,
+        shift: !!(ev && ev.shiftKey),
+        ctrl: !!(ev && (ev.ctrlKey || ev.metaKey)),
+        moveStack: false
+    });
+    function go(n) {
+        const sendCount = (n >= count) ? 0 : n;
+        send(C2S.MOVE_ITEM, encodeMoveItem(from, to, sendCount));
+    }
+    if (decision.kind === 'amount') {
+        go(decision.amount);
+        return;
+    }
+    showStackSplitModal({
+        max: decision.max,
+        item: item,
+        label: itemLabel(item && item.id),
+        onConfirm: go
+    });
+}
+
 function onContainerDrop(ev, targetContainerId, targetIndex) {
     ev.preventDefault();
     ev.currentTarget.classList.remove('drag-over');
@@ -640,22 +790,23 @@ function onContainerDrop(ev, targetContainerId, targetIndex) {
             onDragEnd();
             return;
         }
-        send(C2S.MOVE_ITEM, encodeMoveItem(
+        moveItemWithSplit(
             { kind: 'container', containerUid: currentDrag.containerId, index: currentDrag.slotIndex },
             { kind: 'container', containerUid: targetContainerId, index: targetIndex },
-            0
-        ));
+            currentDrag.item,
+            ev
+        );
     }
     onDragEnd();
 }
 
 function showEquipMenu(clientX, clientY, item, slotKey) {
     const el = $('ctx-menu');
-    const wrap = $('gameCanvasContainer');
-    if (!el || !wrap) return;
+    if (!el) return;
+    hideItemPopover(true);
     el.textContent = '';
     const rows = [
-        { label: 'Look', fn: function () { fct(formatItemTooltip(item.id, item.count)); } },
+        { label: 'Look', fn: function () { showItemPopover(clientX, clientY, item.id, item.count, true); } },
         {
             label: 'Unequip',
             fn: function () {
@@ -674,14 +825,12 @@ function showEquipMenu(clientX, clientY, item, slotKey) {
     rows.forEach(function (entry) {
         const b = document.createElement('button');
         b.type = 'button';
+        b.className = 'inv-context-item';
         b.textContent = entry.label;
         b.onclick = function () { hideCtx(); entry.fn(); };
         el.appendChild(b);
     });
-    const rect = wrap.getBoundingClientRect();
-    el.hidden = false;
-    el.style.left = Math.max(0, clientX - rect.left) + 'px';
-    el.style.top = Math.max(0, clientY - rect.top) + 'px';
+    placeCtxMenu(el, clientX, clientY);
 }
 
 function paintGrid(el, view, selectedIndex, kind) {
@@ -711,11 +860,13 @@ function paintGrid(el, view, selectedIndex, kind) {
         if (it) {
             slot.classList.add('is-filled');
             slot.setAttribute('draggable', 'true');
+            slot.dataset.itemId = it.id;
             if (i === selectedIndex) slot.classList.add('is-selected');
             if (it.flags & 1) slot.classList.add('is-container');
 
             const tooltip = formatItemTooltip(it.id, it.count);
             slot.title = tooltip;
+            bindItemPopover(slot, it.id, it.count);
 
             const img = document.createElement('img');
             img.src = resolveItemSpriteUrl(it.id, 'rpg_fantasy');
@@ -742,7 +893,9 @@ function paintGrid(el, view, selectedIndex, kind) {
         } else {
             slot.classList.remove('is-filled', 'is-selected', 'is-container');
             slot.setAttribute('draggable', 'false');
+            delete slot.dataset.itemId;
             slot.title = 'Empty slot';
+            bindItemPopover(slot, null);
         }
 
         slot.onclick = function (ev) {
@@ -827,8 +980,10 @@ function renderEquipment() {
             el.classList.add('is-filled', 'inv-equip-slot');
             el.classList.toggle('is-selected', selectedEquipSlot === key);
             el.setAttribute('draggable', 'true');
+            el.dataset.itemId = it.id;
             const tooltip = formatItemTooltip(it.id, it.count);
             el.title = tooltip;
+            bindItemPopover(el, it.id, it.count);
 
             const img = document.createElement('img');
             img.src = resolveItemSpriteUrl(it.id, 'rpg_fantasy');
@@ -848,8 +1003,10 @@ function renderEquipment() {
         } else {
             el.classList.remove('is-filled', 'inv-equip-slot', 'is-selected');
             el.setAttribute('draggable', 'false');
+            delete el.dataset.itemId;
             el.title = el.getAttribute('title') || key;
             el.innerHTML = '<span class="slot-placeholder">' + (SLOT_PLACEHOLDERS[key] || '') + '</span>';
+            bindItemPopover(el, null);
         }
 
         el.ondragstart = function (ev) {
@@ -930,6 +1087,35 @@ function renderDialog(text, replies) {
     placeFloat(panel, talkNpc);
 }
 
+function makeItemSprite(itemId) {
+    const img = document.createElement('img');
+    img.src = resolveItemSpriteUrl(itemId, visualGenre());
+    img.alt = itemLabel(itemId);
+    img.draggable = false;
+    img.onerror = function () { this.style.display = 'none'; };
+    return img;
+}
+
+function makeItemRow(opts) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'inv-item-row ' + (opts.className || '');
+    b.appendChild(makeItemSprite(opts.itemId));
+    const text = document.createElement('span');
+    text.className = 'inv-item-row-label';
+    text.textContent = opts.label;
+    b.appendChild(text);
+    if (opts.badge) {
+        const badge = document.createElement('span');
+        badge.className = 'badge-retro';
+        badge.textContent = opts.badge;
+        b.appendChild(badge);
+    }
+    bindItemPopover(b, opts.itemId, opts.count || 1);
+    if (opts.onclick) b.onclick = opts.onclick;
+    return b;
+}
+
 function renderShop(currency, items) {
     const panel = $('npc-shop');
     const body = $('shop-body');
@@ -940,21 +1126,26 @@ function renderShop(currency, items) {
     cap.textContent = 'Currency: ' + currency;
     body.appendChild(cap);
     items.forEach(function (it) {
+        const label = itemLabel(it.itemId);
         if (it.buy > 0) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'btn btn-retro btn-retro-cyan w-100 mb-1 d-flex justify-content-between align-items-center';
-            b.innerHTML = '<span>Buy ' + escapeHtml(itemLabel(it.itemId)) + '</span><span class="badge-retro">' + it.buy + ' ' + escapeHtml(currency) + '</span>';
-            b.onclick = function () { send(C2S.SHOP_BUY, encodeStrPayload(shopNpc, 1, it.itemId)); };
-            body.appendChild(b);
+            body.appendChild(makeItemRow({
+                itemId: it.itemId,
+                count: 1,
+                label: 'Buy ' + label,
+                badge: it.buy + ' ' + currency,
+                className: 'is-buy',
+                onclick: function () { send(C2S.SHOP_BUY, encodeStrPayload(shopNpc, 1, it.itemId)); }
+            }));
         }
         if (it.sell > 0) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'btn btn-retro btn-secondary w-100 mb-1 d-flex justify-content-between align-items-center ghost';
-            b.innerHTML = '<span>Sell ' + escapeHtml(itemLabel(it.itemId)) + '</span><span class="badge-retro">' + it.sell + ' ' + escapeHtml(currency) + '</span>';
-            b.onclick = function () { send(C2S.SHOP_SELL, encodeStrPayload(shopNpc, 1, it.itemId)); };
-            body.appendChild(b);
+            body.appendChild(makeItemRow({
+                itemId: it.itemId,
+                count: 1,
+                label: 'Sell ' + label,
+                badge: it.sell + ' ' + currency,
+                className: 'is-sell',
+                onclick: function () { send(C2S.SHOP_SELL, encodeStrPayload(shopNpc, 1, it.itemId)); }
+            }));
         }
     });
     placeFloat(panel, shopNpc);
@@ -972,16 +1163,24 @@ function renderLoot(items) {
         body.appendChild(p);
     } else {
         items.forEach(function (it, slot) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'btn btn-retro btn-secondary w-100 mb-1 text-start d-flex align-items-center gap-1';
-            b.innerHTML = '<i class="fa-solid fa-box-open text-muted"></i> <span>' + it.count + '× ' + escapeHtml(itemLabel(it.id)) + '</span>';
-            b.onclick = function () {
-                const p = new Uint8Array(5);
-                new DataView(p.buffer).setUint32(0, openCorpse >>> 0, true);
-                p[4] = slot;
-                send(C2S.LOOT_TAKE, p);
-            };
+            const b = makeItemRow({
+                itemId: it.id,
+                count: it.count,
+                label: (it.count > 1 ? it.count + '× ' : '') + itemLabel(it.id),
+                className: 'is-loot',
+                onclick: function () {
+                    const p = new Uint8Array(5);
+                    new DataView(p.buffer).setUint32(0, openCorpse >>> 0, true);
+                    p[4] = slot;
+                    send(C2S.LOOT_TAKE, p);
+                }
+            });
+            if (it.count > 1) {
+                const c = document.createElement('span');
+                c.className = 'inv-stack-count';
+                c.textContent = String(it.count);
+                b.appendChild(c);
+            }
             body.appendChild(b);
         });
     }
@@ -1046,13 +1245,14 @@ function setDeath(on) {
     setSessionBadge(on ? 'DEAD' : (self ? 'READY' : 'CONNECTING'));
 }
 
-function drawPlacement(tileX, tileY, placement, genre, targetCtx, originX, originY, tw, th) {
+function drawPlacement(tileX, tileY, placement, genre, targetCtx, originX, originY, tw, th, frame) {
     if (!placement || !placement.catalogId) return false;
     const opts = {
         genre: genre,
         kind: placement.kind || 'tiles',
         id: placement.catalogId,
-        variant: placement.variant || Sprites.DEFAULT_TILE_VARIANT
+        variant: placement.variant || Sprites.DEFAULT_TILE_VARIANT,
+        frame: frame | 0
     };
     Sprites.prefetch(opts);
     const img = Sprites.getReady(opts);
@@ -1064,8 +1264,9 @@ function drawPlacement(tileX, tileY, placement, genre, targetCtx, originX, origi
     const cellH = th || TS;
     const tilePx = (tileX - ox) * cellW;
     const tilePy = (tileY - oy) * cellH;
-    const iw = img.naturalWidth || img.width || cellW;
-    const ih = img.naturalHeight || img.height || cellH;
+    const size = Sprites.getCachedImageSize ? Sprites.getCachedImageSize(img) : null;
+    const iw = size ? size.iw : (img.naturalWidth || img.width || cellW);
+    const ih = size ? size.ih : (img.naturalHeight || img.height || cellH);
     const box = Draw.resolveTileDrawBox(tilePx, tilePy, cellW, cellH, iw, ih, placement.scale, placement.anchor);
     try {
         g.drawImage(img, box.dx, box.dy, box.dw, box.dh);
@@ -1096,26 +1297,42 @@ function entityImage(ent) {
     return null;
 }
 
-function drawEntitySprite(ent, color) {
+function entityPresentPx(ent) {
     const vis = visualPos(ent) || { x: ent.x, y: ent.y, z: ent.z };
     const tNowMs = nowMs();
     const tNowSec = tNowMs / 1000;
-
-    // Step bob during tile slide (half-sine hop)
     const bobPy = SpritePres ? SpritePres.stepBobOffsetPx(ent, tNowMs, TS, 0.08) : 0;
-    // Hit recoil nudge on damage
     const recoil = SpritePres ? SpritePres.getHitRecoilOffset(ent, tNowSec, TS, TS) : { x: 0, y: 0 };
+    return {
+        tilePx: (vis.x - camX) * TS + recoil.x,
+        tilePy: (vis.y - camY) * TS + recoil.y + bobPy,
+        floorPy: (vis.y - camY) * TS + recoil.y,
+        bobPy: bobPy,
+        tNowSec: tNowSec
+    };
+}
 
-    const tilePx = (vis.x - camX) * TS + recoil.x;
-    const tilePy = (vis.y - camY) * TS + recoil.y + bobPy;
-    const basePy = (vis.y - camY) * TS;
+function entitySpriteBox(ent, img, pres) {
+    if (!img) return null;
+    const p = pres || entityPresentPx(ent);
+    const size = Sprites.getCachedImageSize ? Sprites.getCachedImageSize(img) : null;
+    const iw = size ? size.iw : (img.naturalWidth || img.width || TS);
+    const ih = size ? size.ih : (img.naturalHeight || img.height || TS);
+    return Draw.resolveTileDrawBox(p.tilePx, p.tilePy, TS, TS, iw, ih, 1, 'bottom_center');
+}
+
+function drawEntitySprite(ent, color) {
+    const pres = entityPresentPx(ent);
+    const tilePx = pres.tilePx;
+    const tilePy = pres.tilePy;
+    const tNowSec = pres.tNowSec;
 
     const img = entityImage(ent);
     const flipH = ent.facing === -1 || ent.spriteFacing === -1 || ent.dir === 3;
 
-    // Soft foot shadow grounded on floor basePy
+    // Soft foot shadow on the floor (recoil, no bob) — HuntDL py - bobY
     if (SpritePres) {
-        SpritePres.drawEntityShadow(ctx, tilePx, basePy, TS, TS, 1, img, flipH, {
+        SpritePres.drawEntityShadow(ctx, tilePx, pres.floorPy, TS, TS, 1, img, flipH, {
             combatTargetHighlight: !!(targetId && ent.id === targetId),
             hoverHighlight: !!(hoveredEntityId && ent.id === hoveredEntityId),
             now: tNowSec
@@ -1124,14 +1341,12 @@ function drawEntitySprite(ent, color) {
 
     // Active combat target: pulsing red circular reticle under feet
     if (targetId && ent.id === targetId && Hud) {
-        Hud.drawTargetReticle(ctx, tilePx, basePy, TS, TS, tNowSec);
+        Hud.drawTargetReticle(ctx, tilePx, pres.floorPy, TS, TS, tNowSec);
     }
 
     let box = null;
     if (img) {
-        const iw = img.naturalWidth || img.width || TS;
-        const ih = img.naturalHeight || img.height || TS;
-        box = Draw.resolveTileDrawBox(tilePx, tilePy, TS, TS, iw, ih, 1, 'bottom_center');
+        box = entitySpriteBox(ent, img, pres);
 
         // Rarity aura outline under sprite for rare+ mobs
         const rarity = SpritePres ? SpritePres.resolveEntityRarityTier(ent) : null;
@@ -1193,7 +1408,8 @@ function draw() {
                 tw: TS,
                 th: TS,
                 sprites: Sprites,
-                drawPlacement: drawPlacement
+                drawPlacement: drawPlacement,
+                timeSec: nowMs() / 1000
             });
         }
         if (!cached) {
@@ -1322,19 +1538,15 @@ function draw() {
     if (Hud) {
         function renderEntityHud(ent) {
             if (!ent || (ent.z | 0) !== (z | 0)) return;
-            const vis = visualPos(ent) || ent;
-            const tilePx = (vis.x - camX) * TS;
-            const tilePy = (vis.y - camY) * TS;
+            const pres = entityPresentPx(ent);
             const img = entityImage(ent);
-            let stackTopY = tilePy;
+            let stackTopY = pres.tilePy;
             if (img) {
-                const iw = img.naturalWidth || img.width || TS;
-                const ih = img.naturalHeight || img.height || TS;
-                const box = Draw.resolveTileDrawBox(tilePx, tilePy, TS, TS, iw, ih, 1, 'bottom_center');
-                stackTopY = box.dy;
+                const box = entitySpriteBox(ent, img, pres);
+                if (box) stackTopY = box.dy;
             }
             const showMana = !!(self && ent.id === self.id);
-            Hud.drawNameplate(ctx, ent, tilePx, stackTopY, TS, showMana);
+            Hud.drawNameplate(ctx, ent, pres.tilePx, stackTopY, TS, showMana);
         }
         if (self) renderEntityHud(self);
         others.forEach(function (p) {
@@ -1376,7 +1588,7 @@ function isWalkable(x, y) {
         worldPins.forEach(function (pin) {
             if (blocked) return;
             if ((pin.x | 0) === x && (pin.y | 0) === y && (pin.z | 0) === self.z) {
-                if (pin.kind === 'chest' || (pin.kind === 'door' && !(pin.flags & 1))) {
+                if (pin.kind === 'chest' || (pin.kind === 'door' && (pin.flags & 1))) {
                     blocked = true;
                 }
             }
@@ -1385,28 +1597,100 @@ function isWalkable(x, y) {
     return !blocked;
 }
 
-function stopWalk(keepPending) {
+function sendWalkPath(dirs) {
+    if (!dirs || !dirs.length) {
+        if (walkQueued) send(C2S.MOVE_PATH, Uint8Array.of(0));
+        walkQueued = false;
+        return;
+    }
+    const n = Math.min(165, dirs.length);
+    send(C2S.MOVE_PATH, encodeMovePath(n === dirs.length ? dirs : dirs.slice(0, n)));
+    walkQueued = true;
+}
+
+function stopWalk(keepPending, silent) {
+    const notify = walkQueued && !silent;
     walkDest = null;
     walkBusy = false;
+    walkQueued = false;
+    chaseWalk = false;
     if (!keepPending) pendingAfterWalk = null;
-    if (walkRetry) {
-        clearTimeout(walkRetry);
-        walkRetry = 0;
-    }
+    if (notify) send(C2S.MOVE_PATH, Uint8Array.of(0));
 }
 
 function cancelClickWalk() {
+    const notify = walkQueued;
     walkDest = null;
     pendingAfterWalk = null;
-    if (walkRetry) {
-        clearTimeout(walkRetry);
-        walkRetry = 0;
+    chaseWalk = false;
+    walkQueued = false;
+    if (notify) send(C2S.MOVE_PATH, Uint8Array.of(0));
+}
+
+function chaseRange() {
+    const it = equipment.weapon;
+    const id = it && (it.id || it.itemId);
+    const meta = id ? itemCatalog.get(id) : null;
+    if (meta) {
+        if (meta.range != null && Number(meta.range) > 0) return Math.max(1, meta.range | 0);
+        const kind = String(meta.category || meta.weaponType || meta.type || '').toLowerCase();
+        if (kind.indexOf('distance') >= 0 || kind === 'bow' || kind === 'crossbow') return 6;
+        if (kind === 'wand' || kind === 'rod' || kind === 'magic') return 4;
     }
+    return 1;
+}
+
+function pumpChase() {
+    if (!autoChase || !self || downed) return;
+    if (keyWalk.isHeld()) return;
+    if (pendingAfterWalk) return;
+    if (!targetId) return;
+    const tgt = others.get(targetId);
+    if (!tgt || (tgt.hp | 0) <= 0) return;
+    if ((tgt.z | 0) !== (self.z | 0)) return;
+    const range = chaseRange();
+    if (Path.chebyshev(self.x, self.y, tgt.x, tgt.y) <= range) {
+        if (chaseWalk) {
+            walkDest = null;
+            chaseWalk = false;
+        }
+        return;
+    }
+    const dest = Path.nearestApproach(self, tgt, range, isWalkable);
+    if (!dest) return;
+    if ((self.x | 0) === (dest.x | 0) && (self.y | 0) === (dest.y | 0)) {
+        chaseWalk = false;
+        return;
+    }
+    if (walkDest && (walkDest.x | 0) === (dest.x | 0) && (walkDest.y | 0) === (dest.y | 0)) {
+        chaseWalk = true;
+        if (!walkQueued) sendNextStep();
+        return;
+    }
+    chaseWalk = true;
+    walkDest = { x: dest.x | 0, y: dest.y | 0 };
+    sendNextStep();
+}
+
+function selectTarget(id) {
+    const n = id | 0;
+    send(C2S.SET_TARGET, u32buf(n));
+    targetId = n;
+    renderCombat();
+    if (n) pumpChase();
+    else if (chaseWalk) stopWalk();
 }
 
 function sendKeyboardStep(dir) {
     if (!self || downed || dir == null) return false;
     if (walkBusy) return false;
+    const step = Path.DIRS[dir];
+    if (!step) return false;
+    const nx = (self.x | 0) + step.dx;
+    const ny = (self.y | 0) + step.dy;
+    // Known blocked dest: skip send so walkBusy is not held for REJECT BLOCKED.
+    const t = viewport ? Path.tileAt(viewport, nx, ny) : null;
+    if (t != null && !isWalkable(nx, ny)) return false;
     walkBusy = true;
     send(C2S.MOVE_STEP, Uint8Array.of(dir));
     return true;
@@ -1433,23 +1717,23 @@ function runPending() {
 function sendNextStep() {
     if (!self || !walkDest) return;
     if (self.x === walkDest.x && self.y === walkDest.y) {
-        stopWalk(true);
+        stopWalk(true, true);
         runPending();
         return;
     }
     const path = Path.findOrthogonalPath(self, walkDest, isWalkable);
     if (!path || !path.length) {
-        stopWalk();
+        stopWalk(false, true);
         fct('There is no way.');
         return;
     }
-    walkBusy = true;
-    send(C2S.MOVE_STEP, Uint8Array.of(path[0]));
+    sendWalkPath(path);
 }
 
 function startWalk(dest, then) {
     if (!self || !dest) return;
     if (keyWalk.isHeld()) return;
+    if (then) chaseWalk = false;
     pendingAfterWalk = then || null;
     if ((dest.x | 0) === self.x && (dest.y | 0) === self.y) {
         stopWalk(true);
@@ -1522,11 +1806,10 @@ function applyIntents(intents, clientX, clientY) {
                 fct(intent.text || 'Nothing here.');
                 break;
             case 'SET_TARGET':
-                send(C2S.SET_TARGET, u32buf(intent.targetId));
-                targetId = intent.targetId;
-                renderCombat();
+                selectTarget(intent.targetId);
                 break;
             case 'START_AUTOWALK':
+                chaseWalk = false;
                 startWalk(intent.dest, null);
                 break;
             case 'STOP_AUTOWALK':
@@ -1569,20 +1852,119 @@ function applyIntents(intents, clientX, clientY) {
     }
 }
 
+function hideItemPopover(force) {
+    const el = $('item-popover');
+    if (!el) return;
+    if (!force && el.dataset.sticky === '1') return;
+    el.hidden = true;
+    el.dataset.sticky = '0';
+}
+
+function itemPopoverHtml(itemId, stackCount) {
+    const meta = itemCatalog.get(itemId);
+    const rawLabel = (meta && (meta.label || meta.name)) || itemLabel(itemId);
+    const label = String(rawLabel).split(' ').map(function (w) {
+        return w.charAt(0).toUpperCase() + w.slice(1);
+    }).join(' ');
+    const src = resolveItemSpriteUrl(itemId, visualGenre());
+    let rows = '';
+    function addRow(k, v) {
+        rows += '<tr><td class="eq-stat-label">' + escapeHtml(k) + '</td><td class="eq-stat-val">' + escapeHtml(String(v)) + '</td></tr>';
+    }
+    if (stackCount && stackCount > 1) addRow('Count', stackCount);
+    if (meta) {
+        const kind = meta.category || meta.weaponType || meta.type || meta.slot;
+        if (kind) addRow('Type', kind);
+        if (meta.slot) addRow('Slot', meta.slot);
+        if (meta.atk != null && meta.atk > 0) addRow('Atk', meta.atk);
+        if (meta.defense != null && meta.defense > 0) addRow('Def', meta.defense);
+        if (meta.armor != null && meta.armor > 0) addRow('Arm', meta.armor);
+        if (meta.range != null && meta.range > 1) addRow('Range', meta.range);
+        if (meta.twoHanded || meta.hands === 2) addRow('Hands', 'Two-handed');
+        if (meta.weight != null && meta.weight > 0) addRow('Weight', (meta.weight / 100).toFixed(2) + ' oz');
+    }
+    return '<div class="eq-modal-thumb"><img src="' + escapeHtml(src || '') + '" alt=""></div>'
+        + '<div class="eq-modal-title">' + escapeHtml(label) + '</div>'
+        + (meta && meta.id ? '<div class="eq-modal-id">' + escapeHtml(meta.id) + '</div>' : '')
+        + (rows ? '<table class="eq-stat-table"><tbody>' + rows + '</tbody></table>' : '');
+}
+
+function showItemPopover(clientX, clientY, itemId, stackCount, sticky) {
+    const el = $('item-popover');
+    if (!el) return;
+    el.innerHTML = itemPopoverHtml(itemId, stackCount);
+    el.dataset.sticky = sticky ? '1' : '0';
+    placeCtxMenu(el, clientX, clientY);
+}
+
+function bindItemPopover(el, itemId, count) {
+    if (!el) return;
+    if (!itemId) {
+        el.onmouseenter = null;
+        el.onmousemove = null;
+        el.onmouseleave = null;
+        return;
+    }
+    el.onmouseenter = function (ev) {
+        showItemPopover(ev.clientX + 12, ev.clientY + 12, itemId, count, false);
+    };
+    el.onmousemove = function (ev) {
+        const pop = $('item-popover');
+        if (!pop || pop.hidden || pop.dataset.sticky === '1') return;
+        placeCtxMenu(pop, ev.clientX + 12, ev.clientY + 12);
+    };
+    el.onmouseleave = function () {
+        hideItemPopover(false);
+    };
+}
+
 function hideCtx() {
     const el = $('ctx-menu');
     if (el) el.hidden = true;
+    hideItemPopover(true);
+    hideStackSplitModal();
+}
+
+function ctxMenuHost() {
+    return document.fullscreenElement
+        || document.webkitFullscreenElement
+        || document.mozFullScreenElement
+        || document.body;
+}
+
+// HuntDL placeContextMenu: fixed at the cursor, flip then clamp to the viewport.
+function placeCtxMenu(el, x, y) {
+    if (!el || !el.style) return;
+    const host = ctxMenuHost();
+    if (host && el.parentNode !== host) host.appendChild(el);
+    el.hidden = false;
+    const pad = 8;
+    const menuW = el.offsetWidth || 160;
+    const menuH = el.offsetHeight || 80;
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+    let left = Number(x) || 0;
+    let top = Number(y) || 0;
+    if (left + menuW > vw - pad) left = left - menuW;
+    if (top + menuH > vh - pad) top = top - menuH;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    if (left > vw - menuW - pad) left = Math.max(pad, vw - menuW - pad);
+    if (top > vh - menuH - pad) top = Math.max(pad, vh - menuH - pad);
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
 }
 
 function showCanvasMenu(hit, clientX, clientY) {
     const el = $('ctx-menu');
-    const wrap = $('gameCanvasContainer');
-    if (!el || !wrap) return;
+    if (!el) return;
+    hideItemPopover(true);
     const entries = Mouse.buildCanvasContextMenuEntries(hit);
     el.textContent = '';
     entries.forEach(function (entry) {
         const b = document.createElement('button');
         b.type = 'button';
+        b.className = 'inv-context-item';
         b.textContent = entry.label;
         b.onclick = function () {
             hideCtx();
@@ -1607,19 +1989,16 @@ function showCanvasMenu(hit, clientX, clientY) {
         };
         el.appendChild(b);
     });
-    const rect = wrap.getBoundingClientRect();
-    el.hidden = false;
-    el.style.left = Math.max(0, clientX - rect.left) + 'px';
-    el.style.top = Math.max(0, clientY - rect.top) + 'px';
+    placeCtxMenu(el, clientX, clientY);
 }
 
 function showInvMenu(clientX, clientY, item, containerId, index) {
     const el = $('ctx-menu');
-    const wrap = $('gameCanvasContainer');
-    if (!el || !wrap) return;
+    if (!el) return;
+    hideItemPopover(true);
     el.textContent = '';
     const rows = [
-        { label: 'Look', fn: function () { fct(formatItemTooltip(item.id, item.count)); } },
+        { label: 'Look', fn: function () { showItemPopover(clientX, clientY, item.id, item.count, true); } },
         {
             label: 'Use',
             fn: function () {
@@ -1654,14 +2033,12 @@ function showInvMenu(clientX, clientY, item, containerId, index) {
     rows.forEach(function (entry) {
         const b = document.createElement('button');
         b.type = 'button';
+        b.className = 'inv-context-item';
         b.textContent = entry.label;
         b.onclick = function () { hideCtx(); entry.fn(); };
         el.appendChild(b);
     });
-    const rect = wrap.getBoundingClientRect();
-    el.hidden = false;
-    el.style.left = Math.max(0, clientX - rect.left) + 'px';
-    el.style.top = Math.max(0, clientY - rect.top) + 'px';
+    placeCtxMenu(el, clientX, clientY);
 }
 
 function canvasTile(ev) {
@@ -1834,6 +2211,12 @@ function onFrame(bytes, tokenHex) {
         downed = false;
         setDeath(false);
         log('in world as ' + self.name, 'ok');
+        if (typeof EngineActionBars !== 'undefined' && EngineActionBars.onEnter) {
+            EngineActionBars.onEnter({
+                characterId: self.id,
+                vocation: self.vocation
+            });
+        }
         setHud();
         renderSkills();
         draw();
@@ -1851,22 +2234,28 @@ function onFrame(bytes, tokenHex) {
     if (opcode === S2C.MOVE) {
         const id = r.u32(), x = r.i16(), y = r.i16(), z = r.i8(), dir = r.u8();
         if (self && id === self.id) {
+            const prevZ = self.z | 0;
             beginSlide(self, x, y, z);
-            self.dir = dir;
-            if (dir === 3) self.facing = -1;
-            else if (dir === 1) self.facing = 1;
+            applyDirFacing(self, dir);
             setHud();
             walkBusy = false;
             if (keyWalk.isHeld()) pumpKeyboardWalk(nowMs());
-            else if (walkDest) sendNextStep();
+            else if (walkDest) {
+                if (self.x === walkDest.x && self.y === walkDest.y) {
+                    stopWalk(true, true);
+                    runPending();
+                } else if ((z | 0) !== prevZ) {
+                    stopWalk(false, true);
+                    pumpChase();
+                }
+            } else pumpChase();
         } else {
             const p = others.get(id);
             if (p) {
                 beginSlide(p, x, y, z);
-                p.dir = dir;
-                if (dir === 3) p.facing = -1;
-                else if (dir === 1) p.facing = 1;
+                applyDirFacing(p, dir);
             }
+            if (id === targetId) pumpChase();
         }
         renderCombat();
         draw();
@@ -1890,15 +2279,13 @@ function onFrame(bytes, tokenHex) {
         if (reason === REASON.BUSY) {
             walkBusy = false;
             if (keyWalk.isHeld()) pumpKeyboardWalk(nowMs());
-            else if (walkDest) {
-                if (walkRetry) clearTimeout(walkRetry);
-                walkRetry = setTimeout(function () {
-                    walkRetry = 0;
-                    sendNextStep();
-                }, 200);
+        } else if (reason === REASON.BLOCKED) {
+            walkBusy = false;
+            if (walkDest) {
+                stopWalk(false, true);
+                pumpChase();
             }
-        } else if (reason === REASON.BLOCKED && walkDest) {
-            stopWalk();
+            if (keyWalk.isHeld()) pumpKeyboardWalk(nowMs());
         }
         return;
     }
@@ -1907,16 +2294,18 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.APPEAR) {
-        const p = {
+        const p = typeof decodeAppear === 'function' ? decodeAppear(r.b.subarray(r.o)) : {
             id: r.u32(), name: r.str(), x: r.i16(), y: r.i16(), z: r.i8(),
-            hp: r.u16(), hpMax: r.u16(), flags: r.u8()
+            hp: r.u16(), hpMax: r.u16(), flags: r.u8(),
+            look: r.o < r.b.length ? r.str() : '',
+            dir: r.o < r.b.length ? r.u8() : 0
         };
-        p.look = r.o < r.b.length ? r.str() : '';
         p.fromX = p.x;
         p.fromY = p.y;
         p.facing = 1;
         p.moveAt = 0;
         p.moveDur = 0;
+        applyDirFacing(p, p.dir);
         others.set(p.id, p);
         if (!seenAt.has(p.id)) seenAt.set(p.id, Date.now());
         renderCombat();
@@ -1926,7 +2315,10 @@ function onFrame(bytes, tokenHex) {
     if (opcode === S2C.DISAPPEAR) {
         const id = r.u32();
         others.delete(id);
-        if (targetId === id) targetId = 0;
+        if (targetId === id) {
+            targetId = 0;
+            if (chaseWalk) stopWalk();
+        }
         if (hoveredEntityId === id) hoveredEntityId = 0;
         renderCombat();
         draw();
@@ -1947,7 +2339,13 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.SWING) {
-        const src = r.u32(), dst = r.u32(), amount = r.u16(), flags = r.u8();
+        const sw = typeof decodeSwing === 'function' ? decodeSwing(r.b.subarray(r.o)) : {
+            sourceId: r.u32(), targetId: r.u32(), amount: r.u16(), flags: r.u8(),
+            element: r.o < r.b.length ? r.u8() : 0,
+            weaponId: r.o < r.b.length ? r.str() : '',
+            ammoId: r.o < r.b.length ? r.str() : ''
+        };
+        const src = sw.sourceId, dst = sw.targetId, amount = sw.amount, flags = sw.flags;
         log('swing ' + src + '→' + dst + ' ' + amount + (flags & 1 ? ' miss' : '') + (flags & 2 ? ' death' : ''));
         const attacker = entityById(src);
         const defender = entityById(dst);
@@ -1955,6 +2353,8 @@ function onFrame(bytes, tokenHex) {
         const isDeath = !!(flags & 2);
         const isCrit = !!(flags & 4);
         const tNow = nowMs() / 1000;
+        const elName = typeof swingElementName === 'function' ? swingElementName(sw.element) : 'physical';
+        const elColor = CombatFx ? CombatFx.elementColorForSpell(elName) : '#ffffff';
 
         if (defender) {
             if (isMiss) {
@@ -1973,7 +2373,7 @@ function onFrame(bytes, tokenHex) {
                 }
                 if (CombatFx) {
                     const text = isCrit ? (amount + '!') : String(amount);
-                    const color = isCrit ? CombatFx.ELEMENT_COLORS.crit : CombatFx.ELEMENT_COLORS.physical;
+                    const color = isCrit ? CombatFx.ELEMENT_COLORS.crit : elColor;
                     CombatFx.pushFct({
                         x: defender.x,
                         y: defender.y,
@@ -1994,15 +2394,21 @@ function onFrame(bytes, tokenHex) {
             }
         }
         if (attacker && defender && CombatFx) {
-            const isRanged = attacker.weaponType === 'distance' || attacker.weaponType === 'ranged';
-            if (isRanged) {
+            const ammoId = sw.ammoId || '';
+            const weaponId = sw.weaponId || '';
+            const isRanged = !!(ammoId
+                || (attacker.weaponType === 'distance')
+                || (attacker.weaponType === 'ranged'));
+            const isWand = !isRanged && elName !== 'physical' && elName !== 'healing';
+            if (isRanged || isWand) {
                 CombatFx.pushProjectile({
                     x0: attacker.x,
                     y0: attacker.y,
                     x1: defender.x,
                     y1: defender.y,
                     z: attacker.z,
-                    color: '#ffffff'
+                    color: elColor,
+                    spriteId: ammoId || (isWand ? weaponId : null)
                 });
             } else {
                 CombatFx.pushMelee({
@@ -2011,7 +2417,7 @@ function onFrame(bytes, tokenHex) {
                     x1: defender.x,
                     y1: defender.y,
                     z: attacker.z,
-                    color: isCrit ? CombatFx.ELEMENT_COLORS.crit : '#ffffff'
+                    color: isCrit ? CombatFx.ELEMENT_COLORS.crit : elColor
                 });
             }
         }
@@ -2031,7 +2437,10 @@ function onFrame(bytes, tokenHex) {
             stopWalk();
         }
         others.delete(id);
-        if (targetId === id) targetId = 0;
+        if (targetId === id) {
+            targetId = 0;
+            if (chaseWalk) stopWalk();
+        }
         if (hoveredEntityId === id) hoveredEntityId = 0;
         renderCombat();
         draw();
@@ -2150,6 +2559,9 @@ function onFrame(bytes, tokenHex) {
                 });
             }
         }
+        if (typeof EngineActionBars !== 'undefined' && EngineActionBars.onCast) {
+            EngineActionBars.onCast(fx);
+        }
         draw();
         return;
     }
@@ -2183,7 +2595,30 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.SAY) {
-        fct(r.str());
+        const msg = typeof decodeSay === 'function' ? decodeSay(r.b.subarray(r.o)) : {
+            text: r.str(),
+            speakerId: r.o + 4 <= r.b.length ? r.u32() : 0,
+            yell: r.o < r.b.length ? r.u8() !== 0 : false
+        };
+        const text = msg && msg.text != null ? String(msg.text) : '';
+        const speakerId = msg && msg.speakerId ? (msg.speakerId | 0) : 0;
+        const yell = !!(msg && msg.yell);
+        const speaker = speakerId ? entityById(speakerId) : null;
+        if (speaker && CombatFx) {
+            CombatFx.pushFct({
+                x: speaker.x,
+                y: speaker.y,
+                z: speaker.z,
+                text: text,
+                color: yell ? '#fbbf24' : '#fde68a',
+                life: yell ? 2.2 : 1.6,
+                isCrit: yell
+            });
+            log(text);
+            draw();
+        } else {
+            fct(text);
+        }
         return;
     }
     if (opcode === S2C.DIALOG) {
@@ -2220,7 +2655,12 @@ function onFrame(bytes, tokenHex) {
             kind: r.str(),
             flags: r.o < r.b.length ? r.u8() : 0
         };
-        f.createdAt = nowMs();
+        const recvMs = nowMs();
+        if (f.createdTick != null && typeof fieldCreatedAtMs === 'function') {
+            f.createdAt = fieldCreatedAtMs(f.createdTick, lastTick, ups, recvMs);
+        } else {
+            f.createdAt = recvMs;
+        }
         fields.set(f.x + ',' + f.y + ',' + f.z, f);
         draw();
         return;
@@ -2288,6 +2728,7 @@ function connect(cfg, tokenHex) {
     visualLoader.reset();
     if (tilemapCache) tilemapCache.invalidate();
     if (CombatFx) CombatFx.clear();
+    if (typeof EngineActionBars !== 'undefined' && EngineActionBars.reset) EngineActionBars.reset();
     keyWalk.reset();
     stopWalk();
     setDeath(false);
@@ -2329,10 +2770,7 @@ function cycleTarget(dir) {
     let idx = list.findIndex(function (row) { return row.id === targetId; });
     if (idx < 0) idx = dir > 0 ? -1 : 0;
     idx = (idx + dir + list.length) % list.length;
-    const id = list[idx].id;
-    send(C2S.SET_TARGET, u32buf(id));
-    targetId = id;
-    renderCombat();
+    selectTarget(list[idx].id);
 }
 
 function tickFps(now) {
@@ -2349,6 +2787,16 @@ function tickFps(now) {
     pumpKeyboardWalk(now);
     requestAnimationFrame(tickFps);
 }
+
+// Native OS menu off inside the play workspace (canvas, docks, bag, eq).
+// Capture preventDefault does not stop app RMB handlers. Header stays native.
+document.addEventListener('contextmenu', function (ev) {
+    const t = ev && ev.target;
+    if (t && typeof t.closest === 'function'
+        && (t.closest('.play-shell') || t.closest('#ctx-menu'))) {
+        ev.preventDefault();
+    }
+}, true);
 
 if (canvas) {
     canvas.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
@@ -2397,6 +2845,7 @@ window.addEventListener('keyup', function (ev) {
     if (KeyWalk.dirOf(ev.code) == null) return;
     ev.preventDefault();
     keyWalk.keyUp(ev.code);
+    if (!keyWalk.isHeld()) pumpChase();
 });
 
 window.addEventListener('blur', function () {
@@ -2404,8 +2853,15 @@ window.addEventListener('blur', function () {
 });
 
 document.addEventListener('click', function (ev) {
+    const t = ev.target;
     const menu = $('ctx-menu');
-    if (menu && !menu.hidden && !menu.contains(ev.target)) hideCtx();
+    if (menu && !menu.hidden && !menu.contains(t)) hideCtx();
+    const pop = $('item-popover');
+    if (pop && !pop.hidden && pop.dataset.sticky === '1'
+        && !pop.contains(t)
+        && !(menu && menu.contains(t))) {
+        hideItemPopover(true);
+    }
 });
 
 function initCollapsiblePanels() {
@@ -2627,7 +3083,8 @@ document.addEventListener('DOMContentLoaded', function () {
         chaseEl.addEventListener('change', function () {
             autoChase = chaseEl.checked;
             saveAutoChase(autoChase);
-            if (self) send(C2S.SET_AUTO_CHASE, Uint8Array.of(autoChase ? 1 : 0));
+            if (autoChase) pumpChase();
+            else if (chaseWalk) stopWalk();
         });
     }
     const sortBtn = $('combatSortBtn');
@@ -2703,6 +3160,10 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
         const onFsChange = function () {
+            hideCtx();
+            if (typeof EngineActionBarAssign !== 'undefined' && EngineActionBarAssign.closeAll) {
+                EngineActionBarAssign.closeAll();
+            }
             const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
             const enterIcon = $('enterFullscreenIcon');
             const exitIcon = $('exitFullscreenIcon');
@@ -2722,6 +3183,45 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    if (typeof EngineActionBars !== 'undefined' && EngineActionBars.bindHost) {
+        EngineActionBars.bindHost({
+            send: send,
+            protocol: EngineProtocol,
+            cast: cast,
+            getSelf: function () { return self; },
+            getTargetId: function () { return targetId; },
+            getOthers: function () { return others; },
+            getBag: function () { return bag; },
+            getOpenBag: function () { return openBag; },
+            getEquipment: function () { return equipment; },
+            getTick: function () { return lastTick; },
+            getUps: function () { return ups; },
+            isDowned: function () { return downed; },
+            entityById: entityById,
+            canvasTile: canvasTile,
+            entityAtTile: function (tile) {
+                const hit = hitFromTile(tile);
+                return hit && hit.creature ? hit.creature : null;
+            },
+            fct: function (text, color) {
+                const msg = text == null ? '' : String(text);
+                if (!msg) return;
+                if (color && self && typeof EngineCombatFx !== 'undefined'
+                    && typeof EngineCombatFx.pushFct === 'function') {
+                    EngineCombatFx.pushFct({
+                        x: self.x,
+                        y: self.y,
+                        z: self.z,
+                        text: msg,
+                        color: color,
+                        life: 1.2
+                    });
+                    return;
+                }
+                fct(msg);
+            }
+        });
+    }
     initCollapsiblePanels();
     $('dialog-close') && $('dialog-close').addEventListener('click', function () {
         if (talkNpc) send(C2S.TALK_CLOSE, u32buf(talkNpc));

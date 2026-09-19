@@ -6,6 +6,10 @@ const MOUSE_CONTROLS_KEY = 'engine.mouseControls';
 const AUTO_CHASE_KEY = 'engine.autoChase';
 const COMBAT_SORT_KEY = 'engine.combatSort';
 const LEGACY_CHAR_DB = 'HuntDLClientDB';
+const PREFS_DB_NAME = 'engine.prefs';
+const PREFS_DB_VERSION = 1;
+const ACTION_BARS_STORE = 'actionBars';
+const actionBarsMem = Object.create(null);
 
 const DEFAULT_MOUSE_CONTROLS = Object.freeze({
     mouseControlMode: 1,
@@ -160,5 +164,97 @@ function saveSidebarPanelsPrefs(prefs) {
     }
 }
 
+function openPrefsDb() {
+    return new Promise(function (resolve, reject) {
+        if (typeof indexedDB === 'undefined' || typeof indexedDB.open !== 'function') {
+            reject(new Error('no indexedDB'));
+            return;
+        }
+        const req = indexedDB.open(PREFS_DB_NAME, PREFS_DB_VERSION);
+        req.onupgradeneeded = function () {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(ACTION_BARS_STORE)) {
+                db.createObjectStore(ACTION_BARS_STORE);
+            }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('prefs db')); };
+    });
+}
+
+function loadActionBars(characterId) {
+    const id = String(characterId || '');
+    if (!id) return Promise.resolve(null);
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.open !== 'function') {
+        const row = actionBarsMem[id];
+        return Promise.resolve(row ? JSON.parse(JSON.stringify(row)) : null);
+    }
+    return openPrefsDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            const tx = db.transaction(ACTION_BARS_STORE, 'readonly');
+            const req = tx.objectStore(ACTION_BARS_STORE).get(id);
+            req.onsuccess = function () {
+                const v = req.result;
+                resolve(v && typeof v === 'object' ? v : null);
+            };
+            req.onerror = function () { reject(req.error); };
+        });
+    }).catch(function () {
+        const row = actionBarsMem[id];
+        return row ? JSON.parse(JSON.stringify(row)) : null;
+    });
+}
+
+function saveActionBars(characterId, doc) {
+    const id = String(characterId || '');
+    if (!id) return Promise.resolve();
+    const payload = doc && typeof doc === 'object' ? JSON.parse(JSON.stringify(doc)) : {};
+    actionBarsMem[id] = payload;
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.open !== 'function') {
+        return Promise.resolve();
+    }
+    return openPrefsDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            const tx = db.transaction(ACTION_BARS_STORE, 'readwrite');
+            const req = tx.objectStore(ACTION_BARS_STORE).put(payload, id);
+            req.onsuccess = function () { resolve(); };
+            req.onerror = function () { reject(req.error); };
+        });
+    }).catch(function () { /* private mode / quota: RAM copy kept */ });
+}
+
+function clearActionBarsMem() {
+    const keys = Object.keys(actionBarsMem);
+    for (let i = 0; i < keys.length; i++) delete actionBarsMem[keys[i]];
+}
 
 deleteLegacyCharacterStore();
+
+const EnginePrefs = {
+    LAST_EMAIL_KEY: LAST_EMAIL_KEY,
+    PLAY_HANDOFF_KEY: PLAY_HANDOFF_KEY,
+    MOUSE_CONTROLS_KEY: MOUSE_CONTROLS_KEY,
+    PREFS_DB_NAME: PREFS_DB_NAME,
+    ACTION_BARS_STORE: ACTION_BARS_STORE,
+    getLastEmail: getLastEmail,
+    setLastEmail: setLastEmail,
+    writePlayHandoff: writePlayHandoff,
+    takePlayHandoff: takePlayHandoff,
+    loadMouseControls: loadMouseControls,
+    saveMouseControls: saveMouseControls,
+    loadAutoChase: loadAutoChase,
+    saveAutoChase: saveAutoChase,
+    loadCombatSort: loadCombatSort,
+    saveCombatSort: saveCombatSort,
+    loadSidebarPanelsPrefs: loadSidebarPanelsPrefs,
+    saveSidebarPanelsPrefs: saveSidebarPanelsPrefs,
+    loadActionBars: loadActionBars,
+    saveActionBars: saveActionBars,
+    clearActionBarsMem: clearActionBarsMem
+};
+
+if (typeof module === 'object' && module.exports) {
+    module.exports = EnginePrefs;
+} else if (typeof globalThis !== 'undefined') {
+    globalThis.EnginePrefs = EnginePrefs;
+}

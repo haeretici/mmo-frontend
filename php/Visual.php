@@ -43,6 +43,9 @@ final class Visual
     /** @var array<string, array<string, array<string, mixed>>> */
     private static array $roleCatalogs = [];
 
+    /** @var array<string, array<string, array{frames: int, fps: float}>> */
+    private static array $animIndexes = [];
+
     /**
      * @param array<string, mixed> $settings
      */
@@ -123,7 +126,12 @@ final class Visual
         $y = max(0, min($reqY, $rows - $h));
 
         $roles = self::roleCatalog($contentRoot);
-        $palette = self::visualPalette(isset($fm['palette']) && is_array($fm['palette']) ? $fm['palette'] : [null], $roles);
+        $palette = self::visualPalette(
+            isset($fm['palette']) && is_array($fm['palette']) ? $fm['palette'] : [null],
+            $roles,
+            $contentRoot,
+            $genre
+        );
         $layers = [];
         $subList = isset($fm['subLayers']) && is_array($fm['subLayers']) ? $fm['subLayers'] : [];
         $nBytes = $cols * $rows * 2;
@@ -357,7 +365,7 @@ final class Visual
      * @param array<string, array<string, mixed>> $roles
      * @return list<array<string, mixed>|null>
      */
-    private static function visualPalette(array $palette, array $roles): array
+    private static function visualPalette(array $palette, array $roles, string $contentRoot = '', string $genre = self::DEFAULT_GENRE): array
     {
         $out = [];
         foreach ($palette as $i => $slot) {
@@ -419,6 +427,16 @@ final class Visual
             if ($variant !== '') {
                 $row['variant'] = $variant;
             }
+            $anim = self::normalizeAnim(isset($slot['anim']) && is_array($slot['anim']) ? $slot['anim'] : null);
+            if ($anim === null && $catalogId !== '') {
+                $index = self::animIndex($contentRoot, $genre);
+                if (isset($index[$catalogId])) {
+                    $anim = $index[$catalogId];
+                }
+            }
+            if ($anim !== null) {
+                $row['anim'] = $anim;
+            }
             $out[] = $row;
         }
         if ($out === []) {
@@ -465,6 +483,78 @@ final class Visual
             }
         }
         self::$roleCatalogs[$contentRoot] = $out;
+        return $out;
+    }
+
+    /**
+     * @param array<string, mixed>|null $raw
+     * @return array{frames: int, fps: float}|null
+     */
+    private static function normalizeAnim(?array $raw): ?array
+    {
+        if ($raw === null) {
+            return null;
+        }
+        $frames = (int) ($raw['frames'] ?? 0);
+        if ($frames <= 1) {
+            return null;
+        }
+        $fps = isset($raw['fps']) && is_numeric($raw['fps']) ? (float) $raw['fps'] : 4.0;
+        if ($fps <= 0) {
+            $fps = 4.0;
+        }
+        return ['frames' => $frames, 'fps' => $fps];
+    }
+
+    /**
+     * Catalog id → {frames, fps} from data/{genre}/{tiles,overlays,objects}.json.
+     *
+     * @return array<string, array{frames: int, fps: float}>
+     */
+    private static function animIndex(string $contentRoot, string $genre): array
+    {
+        $g = preg_match('/^[a-z][a-z0-9_]{0,39}$/', $genre) ? $genre : self::DEFAULT_GENRE;
+        $key = $contentRoot . ':' . $g;
+        if (isset(self::$animIndexes[$key])) {
+            return self::$animIndexes[$key];
+        }
+        $out = [];
+        $dir = $contentRoot . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR . $g;
+        foreach (['tiles.json', 'overlays.json', 'objects.json'] as $file) {
+            $path = $dir . DIRECTORY_SEPARATOR . $file;
+            if (!is_file($path)) {
+                continue;
+            }
+            try {
+                $doc = Pack::readJson($path);
+            } catch (Throwable $e) {
+                continue;
+            }
+            if (!is_array($doc)) {
+                continue;
+            }
+            $rows = [];
+            if (isset($doc['items']) && is_array($doc['items'])) {
+                $rows = $doc['items'];
+            } elseif (isset($doc['creatures']) && is_array($doc['creatures'])) {
+                $rows = $doc['creatures'];
+            }
+            foreach ($rows as $rec) {
+                if (!is_array($rec)) {
+                    continue;
+                }
+                $id = isset($rec['id']) ? (string) $rec['id'] : (isset($rec['catalogId']) ? (string) $rec['catalogId'] : '');
+                if ($id === '') {
+                    continue;
+                }
+                $anim = self::normalizeAnim(isset($rec['anim']) && is_array($rec['anim']) ? $rec['anim'] : null);
+                if ($anim === null) {
+                    continue;
+                }
+                $out[$id] = $anim;
+            }
+        }
+        self::$animIndexes[$key] = $out;
         return $out;
     }
 

@@ -13,6 +13,7 @@
     const DEFAULT_TILE_VARIANT = 'icon';
     const cache = new Map();
     const failed = new Set();
+    const sizeCache = typeof WeakMap === 'function' ? new WeakMap() : null;
 
     function idToFileStem(id) {
         return String(id || '')
@@ -32,9 +33,11 @@
         return fallback || DEFAULT_TILE_VARIANT;
     }
 
-    function spritePath(genre, kind, id, variant) {
-        const stem = idToFileStem(id);
+    function spritePath(genre, kind, id, variant, frame) {
+        let stem = idToFileStem(id);
         if (!stem) return null;
+        const fi = frame | 0;
+        if (fi > 0) stem = stem + '_' + fi;
         const g = String(genre || 'rpg_fantasy').replace(/[^a-z0-9_]/gi, '');
         const k = String(kind || 'tiles');
         const folder =
@@ -52,8 +55,9 @@
         if (requested !== 'original') variants.push('original');
         const urls = [];
         const seen = Object.create(null);
+        const frame = o.frame | 0;
         for (let i = 0; i < variants.length; i++) {
-            const url = spritePath(o.genre, o.kind, o.id, variants[i]);
+            const url = spritePath(o.genre, o.kind, o.id, variants[i], frame);
             if (!url || seen[url]) continue;
             seen[url] = true;
             urls.push(url);
@@ -110,6 +114,34 @@
         return null;
     }
 
+    /**
+     * Natural size, cached on the drawable (and a WeakMap) so draw loops
+     * do not re-probe naturalWidth/Height every frame.
+     * @param {object|null|undefined} img
+     * @returns {{ iw: number, ih: number }|null}
+     */
+    function getCachedImageSize(img) {
+        if (!img) return null;
+        if (img._spriteIw > 0 && img._spriteIh > 0) {
+            return { iw: img._spriteIw, ih: img._spriteIh };
+        }
+        if (sizeCache && sizeCache.has(img)) return sizeCache.get(img);
+        const iw =
+            img.naturalWidth != null && img.naturalWidth > 0
+                ? img.naturalWidth
+                : (img.width || 0);
+        const ih =
+            img.naturalHeight != null && img.naturalHeight > 0
+                ? img.naturalHeight
+                : (img.height || 0);
+        if (!(iw > 0 && ih > 0)) return null;
+        const size = { iw: iw, ih: ih };
+        img._spriteIw = iw;
+        img._spriteIh = ih;
+        if (sizeCache) sizeCache.set(img, size);
+        return size;
+    }
+
     function resolveItemSpriteUrl(itemOrId, genre) {
         if (!itemOrId) return null;
         let id = '';
@@ -137,6 +169,7 @@
         prefetch,
         loadState,
         getReady,
+        getCachedImageSize,
         resolveItemSpriteUrl
     };
 });

@@ -115,6 +115,11 @@ function main() {
     assert.ok(ctx.calls.some((c) => c.op === 'strokeRect'));
     assert.strictEqual(ctx.strokeStyle, SpritePres.RARITY_AURA.boss.color);
 
+    assert.strictEqual(SpritePres.OPAQUE_ALPHA_MIN, 24);
+    assert.strictEqual(SpritePres.FOOT_BAND_FRAC, 0.33);
+    assert.strictEqual(SpritePres.getSpriteOpaqueFoot(null), null);
+    assert.strictEqual(SpritePres.getRarityAuraSprite(null, 'boss'), null);
+
     console.log('ok sprite_presentation');
 }
 

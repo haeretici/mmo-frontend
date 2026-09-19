@@ -10,6 +10,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     const MAX_FCT_ENTRIES = 64;
     const MAX_FX_ENTRIES = 64;
+    const AMMO_ART_TIP_ANGLE = -Math.PI / 4;
+    const PROJECTILE_SPRITE_SCALE = 0.72;
 
     const ELEMENT_COLORS = Object.freeze({
         physical: '#ffffff',
@@ -34,6 +36,19 @@
      * @param {string} [spellIdOrElement]
      * @returns {string}
      */
+    /**
+     * Canvas rotation so ammo art tip faces flight vector (dx, dy).
+     * Source PNGs point tip toward upper-right (≈ −45° from +X).
+     */
+    function projectileRotation(dx, dy, artTipAngle) {
+        const flight = Math.atan2(dy, dx);
+        const tip =
+            artTipAngle != null && Number.isFinite(Number(artTipAngle))
+                ? Number(artTipAngle)
+                : AMMO_ART_TIP_ANGLE;
+        return flight - tip;
+    }
+
     function elementColorForSpell(spellIdOrElement) {
         if (!spellIdOrElement) return ELEMENT_COLORS.physical;
         const str = String(spellIdOrElement).toLowerCase();
@@ -190,6 +205,52 @@
             const hx = x0 + (x1 - x0) * u;
             const hy = y0 + (y1 - y0) * u;
             const alpha = Math.max(0, 1 - t);
+            const dx = x1 - x0;
+            const dy = y1 - y0;
+
+            if (e.spriteId && sprites && typeof ctx.drawImage === 'function') {
+                const opts = {
+                    id: e.spriteId,
+                    genre: e.spriteGenre || 'rpg_fantasy',
+                    kind: e.spriteKind || 'equipment',
+                    variant: 'alpha'
+                };
+                if (typeof sprites.prefetch === 'function') sprites.prefetch(opts);
+                const img = typeof sprites.getReady === 'function' ? sprites.getReady(opts) : null;
+                let size = null;
+                if (img && typeof sprites.getCachedImageSize === 'function') {
+                    size = sprites.getCachedImageSize(img);
+                } else if (img) {
+                    const iw = img.naturalWidth || img.width || 0;
+                    const ih = img.naturalHeight || img.height || 0;
+                    if (iw > 0 && ih > 0) size = { iw: iw, ih: ih };
+                }
+                if (img && size && size.iw > 0 && size.ih > 0) {
+                    const scaleFrac =
+                        e.spriteScale != null && Number.isFinite(Number(e.spriteScale))
+                            ? Number(e.spriteScale)
+                            : PROJECTILE_SPRITE_SCALE;
+                    const target = Math.min(tw, th) * scaleFrac;
+                    const aspect = size.iw / size.ih;
+                    let dw;
+                    let dh;
+                    if (aspect >= 1) {
+                        dw = target;
+                        dh = target / aspect;
+                    } else {
+                        dh = target;
+                        dw = target * aspect;
+                    }
+                    const rot = projectileRotation(dx, dy);
+                    ctx.save();
+                    ctx.globalAlpha = alpha * 0.95;
+                    ctx.translate(hx, hy);
+                    ctx.rotate(rot);
+                    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+                    ctx.restore();
+                    return;
+                }
+            }
 
             ctx.save();
             ctx.globalAlpha = alpha * 0.85;
@@ -398,6 +459,9 @@
 
     return {
         ELEMENT_COLORS,
+        AMMO_ART_TIP_ANGLE,
+        PROJECTILE_SPRITE_SCALE,
+        projectileRotation,
         elementColorForSpell,
         createCombatFx,
         pushFct: defaultInstance.pushFct,

@@ -13,6 +13,32 @@
     const MAX_WINDOW = 64;
     const TRIP = 2;
     const TERRAIN = TD ? TD.TERRAIN_SUB_LAYER_IDS : ['ground', 'path'];
+    const DEFAULT_TILE_ANIM_FPS = 4;
+
+    function normalizeTileAnim(raw) {
+        if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+        const frames = Math.floor(Number(raw.frames));
+        if (!(frames > 0)) return null;
+        let fps = Number(raw.fps);
+        if (!(fps > 0)) fps = DEFAULT_TILE_ANIM_FPS;
+        return { frames: frames, fps: fps };
+    }
+
+    function isCyclingTileAnim(anim) {
+        return !!(anim && anim.frames > 1);
+    }
+
+    function tileAnimFrameIndex(anim, timeSec) {
+        if (!anim || !(anim.frames > 1)) return 0;
+        const fps = anim.fps > 0 ? anim.fps : DEFAULT_TILE_ANIM_FPS;
+        const t = Number(timeSec);
+        if (!Number.isFinite(t) || t <= 0) return 0;
+        return Math.floor(t * fps) % (anim.frames | 0);
+    }
+
+    function placementAnim(placement) {
+        return placement ? normalizeTileAnim(placement.anim) : null;
+    }
 
     function b64ToU16(b64) {
         if (!b64) return new Uint16Array(0);
@@ -208,6 +234,9 @@
         const margin = o.margin != null ? Math.max(1, o.margin | 0) : 2;
         let cache = null;
         let dirty = true;
+        let overlay = null;
+        let overlayFrames = null;
+        let overlayPending = false;
 
         function allocSurface(wPx, hPx) {
             const w = Math.max(1, wPx | 0);
@@ -241,6 +270,9 @@
             const tw = ro.tw || 32;
             const th = ro.th || 32;
             const drawPlacement = ro.drawPlacement;
+            const timeSec = ro.timeSec != null
+                ? Number(ro.timeSec)
+                : (typeof performance !== 'undefined' && performance.now ? performance.now() / 1000 : Date.now() / 1000);
             const viewW = viewSize.w;
             const viewH = viewSize.h;
             const z = floor.z | 0;
@@ -290,6 +322,7 @@
 
                 let pendingSprites = 0;
                 const genre = floor.genre;
+                const cycling = [];
 
                 for (let li = 0; li < TERRAIN.length; li++) {
                     const layerId = TERRAIN[li];
@@ -299,8 +332,12 @@
                             if (pIdx <= 0) continue;
                             const placement = floor.palette[pIdx];
                             if (!placement || !placement.catalogId) continue;
+                            if (isCyclingTileAnim(placementAnim(placement))) {
+                                cycling.push({ tx: tx, ty: ty, placement: placement });
+                                continue;
+                            }
                             if (drawPlacement) {
-                                const ok = drawPlacement(tx, ty, placement, genre, surface.ctx, cacheX, cacheY, tw, th);
+                                const ok = drawPlacement(tx, ty, placement, genre, surface.ctx, cacheX, cacheY, tw, th, 0);
                                 if (ok === false) {
                                     pendingSprites++;
                                 }
@@ -323,8 +360,11 @@
                     viewW: viewW,
                     viewH: viewH,
                     genre: genre,
-                    pendingSprites: pendingSprites
+                    pendingSprites: pendingSprites,
+                    cycling: cycling
                 };
+                overlayFrames = null;
+                overlayPending = true;
                 dirty = false;
             }
 
@@ -334,17 +374,85 @@
             const sh = viewH * th;
             try {
                 targetCtx.drawImage(cache.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-                return true;
             } catch (_e) {
                 return false;
             }
+
+            const cycling = cache.cycling || [];
+            if (cycling.length && drawPlacement) {
+                let framesDirty = overlayPending || !overlayFrames || overlayFrames.length !== cycling.length;
+                if (!framesDirty) {
+                    for (let i = 0; i < cycling.length; i++) {
+                        const frame = tileAnimFrameIndex(placementAnim(cycling[i].placement), timeSec);
+                        if (frame !== overlayFrames[i]) {
+                            framesDirty = true;
+                            break;
+                        }
+                    }
+                }
+                const rectDirty = !overlay || !overlay.canvas
+                    || overlay.x !== cache.x
+                    || overlay.y !== cache.y
+                    || overlay.w !== cache.w
+                    || overlay.h !== cache.h
+                    || overlay.canvas.width !== cache.w * tw
+                    || overlay.canvas.height !== cache.h * th;
+                if (framesDirty || rectDirty) {
+                    const pixelW = cache.w * tw;
+                    const pixelH = cache.h * th;
+                    let ov = (overlay && overlay.canvas && overlay.ctx && overlay.canvas.width === pixelW && overlay.canvas.height === pixelH)
+                        ? overlay
+                        : (ro.allocSurface ? ro.allocSurface(pixelW, pixelH) : allocSurface(pixelW, pixelH));
+                    if (ov && ov.ctx) {
+                        if (typeof ov.ctx.clearRect === 'function') {
+                            ov.ctx.clearRect(0, 0, pixelW, pixelH);
+                        }
+                        let pendingAnim = 0;
+                        const nextFrames = overlayFrames && overlayFrames.length === cycling.length
+                            ? overlayFrames
+                            : new Int32Array(cycling.length);
+                        for (let i = 0; i < cycling.length; i++) {
+                            const cell = cycling[i];
+                            const frame = tileAnimFrameIndex(placementAnim(cell.placement), timeSec);
+                            nextFrames[i] = frame;
+                            const ok = drawPlacement(
+                                cell.tx, cell.ty, cell.placement, cache.genre,
+                                ov.ctx, cache.x, cache.y, tw, th, frame
+                            );
+                            if (ok === false) pendingAnim++;
+                        }
+                        overlay = {
+                            canvas: ov.canvas,
+                            ctx: ov.ctx,
+                            x: cache.x,
+                            y: cache.y,
+                            w: cache.w,
+                            h: cache.h
+                        };
+                        if (pendingAnim > 0) {
+                            overlayFrames = null;
+                            overlayPending = true;
+                        } else {
+                            overlayFrames = nextFrames;
+                            overlayPending = false;
+                        }
+                    }
+                }
+                if (overlay && overlay.canvas) {
+                    try {
+                        targetCtx.drawImage(overlay.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+                    } catch (_e) { /* keep static blit */ }
+                }
+            }
+            return true;
         }
 
         return {
             render: render,
             invalidate: invalidate,
             get cache() { return cache; },
-            get dirty() { return dirty; }
+            get dirty() { return dirty; },
+            get overlay() { return overlay; }
         };
     }
 
@@ -352,6 +460,10 @@
         MARGIN_MIN,
         MAX_WINDOW,
         TERRAIN,
+        DEFAULT_TILE_ANIM_FPS,
+        normalizeTileAnim,
+        isCyclingTileAnim,
+        tileAnimFrameIndex,
         b64ToU16,
         windowUrl,
         desiredWindow,

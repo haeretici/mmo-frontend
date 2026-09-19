@@ -690,6 +690,381 @@ canvas#world {
   max-width: 340px;
 }
 
+// Canvas-center siblings must overlay. The wrapper is a flex row; in-flow
+// children (HUD FCT, death) shove the canvas sideways.
+.canvas-center-wrapper {
+  .fct {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 5;
+    max-width: min(90%, 28rem);
+    padding: 4px 8px;
+    background: rgba(13, 15, 20, 0.88);
+    border: 1px solid var(--border-color, #{$border-color});
+    border-radius: 4px;
+    color: var(--text-main, #{$text-main});
+    font-size: 0.8rem;
+    line-height: 1.3;
+    pointer-events: none;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .death-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 8, 6, 0.72);
+    font-size: 1.4rem;
+    line-height: 1.3;
+    pointer-events: none;
+  }
+
+  .fct[hidden],
+  .death-overlay[hidden] {
+    display: none !important;
+  }
+}
+
+// Cursor-anchored RMB menu (HuntDL .inv-context-menu): viewport-fixed, not a
+// canvas flex sibling. Inventory lives in the right rail; a wrapper-absolute
+// menu is clipped by .canvas-center-wrapper { overflow: hidden }.
+.ctx-menu {
+  position: fixed;
+  z-index: 1400;
+  min-width: 10rem;
+  background: var(--bg-darkest, #{$bg-darkest});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 0.25rem;
+  line-height: 1.25;
+
+  button,
+  .inv-context-item {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0.35rem 0.55rem;
+    text-align: left;
+    background: transparent;
+    color: var(--text-main, #{$text-main});
+    border: 0;
+    border-radius: 4px;
+    line-height: 1.25;
+    font-size: 0.8rem;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: rgba($accent-primary, 0.15);
+      color: var(--accent-primary, #{$accent-primary});
+    }
+  }
+}
+
+.ctx-menu[hidden] {
+  display: none !important;
+}
+
+.item-popover {
+  position: fixed;
+  z-index: 1390;
+  min-width: 11rem;
+  max-width: 16rem;
+  pointer-events: none;
+  background: var(--bg-darkest, #{$bg-darkest});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 0.55rem 0.65rem 0.6rem;
+  line-height: 1.25;
+
+  &[data-sticky="1"] {
+    pointer-events: auto;
+  }
+
+  .eq-modal-thumb {
+    width: 40px;
+    height: 40px;
+    margin: 0 auto 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img {
+      max-width: 36px;
+      max-height: 36px;
+      image-rendering: pixelated;
+    }
+  }
+
+  .eq-modal-title {
+    font-size: 0.85rem;
+    text-align: center;
+    color: #fff;
+    margin-bottom: 2px;
+  }
+
+  .eq-modal-id {
+    font-family: var(--font-mono, #{$font-mono});
+    font-size: 0.7rem;
+    color: var(--text-muted, #{$text-muted});
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  .eq-stat-table {
+    width: 100%;
+    font-size: 0.75rem;
+    border-collapse: collapse;
+
+    td {
+      padding: 2px 0;
+    }
+  }
+
+  .eq-stat-label {
+    color: var(--text-muted, #{$text-muted});
+  }
+
+  .eq-stat-val {
+    text-align: right;
+    color: var(--text-main, #{$text-main});
+  }
+}
+
+.item-popover[hidden] {
+  display: none !important;
+}
+
+.inv-stack-split-modal {
+  position: fixed;
+  z-index: 1500;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  min-width: 200px;
+  max-width: 260px;
+  background: var(--bg-darkest, #{$bg-darkest});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 6px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
+  padding: 0.55rem 0.65rem 0.6rem;
+}
+
+.inv-stack-split-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-stack-split-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.inv-stack-split-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.inv-stack-split-amount {
+  font-family: var(--font-mono, #{$font-mono});
+  font-size: 0.85rem;
+  min-width: 2rem;
+  text-align: right;
+}
+
+.inv-stack-split-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.inv-stack-split-btn {
+  border: 1px solid var(--border-color, #{$border-color});
+  background: var(--bg-dark, #{$bg-dark});
+  color: var(--text-main, #{$text-main});
+  border-radius: 4px;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.65rem;
+  cursor: pointer;
+}
+
+.action-bar-assign-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-family: var(--font-ui, #{$font-ui});
+}
+
+.action-bar-assign-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+
+  input[type="search"] {
+    flex: 1 1 8rem;
+    min-width: 0;
+  }
+
+  select {
+    max-width: 8rem;
+  }
+}
+
+.action-bar-assign-field,
+.action-bar-assign-check {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #{$text-muted});
+}
+
+.action-bar-assign-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.action-bar-assign-form input,
+.action-bar-assign-form select,
+.action-bar-assign-form textarea {
+  width: 100%;
+  background: var(--bg-input, #{$bg-input});
+  color: var(--text-main, #{$text-main});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.8rem;
+}
+
+.action-bar-assign-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted, #{$text-muted});
+}
+
+.action-bar-assign-empty {
+  padding: 0.5rem;
+  text-align: center;
+  color: var(--text-muted, #{$text-muted});
+  font-size: 0.75rem;
+}
+
+.action-bar-assign-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+
+  &--split {
+    justify-content: space-between;
+  }
+}
+
+.action-bar-assign-warn {
+  font-size: 0.72rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid rgba($accent-warning, 0.45);
+  background: rgba($accent-warning, 0.12);
+  color: var(--text-main, #{$text-main});
+
+  &.is-error {
+    border-color: rgba(255, 123, 123, 0.45);
+    background: rgba(255, 123, 123, 0.12);
+  }
+}
+
+.action-bar-assign-list-item img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+}
+
+.action-bar-lock-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  background: #141824;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  color: var(--text-muted, #{$text-muted});
+  cursor: pointer;
+}
+
+.action-bar-slot.drag-over {
+  border-color: var(--accent-secondary, #{$accent-secondary});
+  box-shadow: 0 0 8px rgba($accent-secondary, 0.4);
+}
+
+.action-bar-context-menu {
+  z-index: 1400;
+}
+
+.inv-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  margin: 0 0 0.25rem;
+  padding: 0.3rem 0.4rem;
+  text-align: left;
+  background: var(--bg-dark, #{$bg-dark});
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  color: var(--text-main, #{$text-main});
+  cursor: pointer;
+  position: relative;
+
+  img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    image-rendering: pixelated;
+    flex: 0 0 24px;
+  }
+
+  .inv-item-row-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+  }
+
+  .inv-stack-count {
+    position: absolute;
+    right: 0.25rem;
+    bottom: 0.1rem;
+    font-size: 0.65rem;
+  }
+
+  &:hover {
+    border-color: var(--accent-secondary, #{$accent-secondary});
+  }
+}
+
 // Collapsible panels styling
 .panel-collapsible-section {
   &.panel-collapsed {

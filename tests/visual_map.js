@@ -127,6 +127,63 @@ function main() {
     assert.strictEqual(cacheMgr.dirty, false);
     assert.ok(placementsDrawn.length > initialPlacements);
 
+    assert.strictEqual(Visual.isCyclingTileAnim({ frames: 4, fps: 1 }), true);
+    assert.strictEqual(Visual.isCyclingTileAnim({ frames: 1, fps: 1 }), false);
+    assert.strictEqual(Visual.tileAnimFrameIndex({ frames: 4, fps: 1 }, 0), 0);
+    assert.strictEqual(Visual.tileAnimFrameIndex({ frames: 4, fps: 1 }, 2.1), 2);
+
+    const mixedCells = new Uint16Array(4);
+    mixedCells[0] = 1;
+    mixedCells[1] = 2;
+    const mixedB64 = Buffer.from(mixedCells.buffer, mixedCells.byteOffset, mixedCells.byteLength).toString('base64');
+    const animFloor = Visual.decodeWindow({
+        ok: true,
+        present: true,
+        mapId: 'room',
+        z: 0,
+        genre: 'rpg_fantasy',
+        originX: 10,
+        originY: 20,
+        width: 2,
+        height: 2,
+        mapCols: 8,
+        mapRows: 8,
+        palette: [
+            null,
+            { catalogId: 'floor', kind: 'tiles' },
+            { catalogId: 'ref_water_fill', kind: 'tiles', anim: { frames: 4, fps: 1 } }
+        ],
+        layers: {
+            ground: mixedB64,
+            path: mixedB64,
+            scenery: mixedB64,
+            furniture: mixedB64,
+            vertical: mixedB64
+        }
+    });
+    const animCache = Visual.createTilemapCache({ margin: 2 });
+    const animDrawn = [];
+    function drawAnim(tx, ty, placement, genre, ctx, cx, cy, tw, th, frame) {
+        animDrawn.push({ id: placement.catalogId, frame: frame | 0, cycling: Visual.isCyclingTileAnim(Visual.normalizeTileAnim(placement.anim)) });
+        return true;
+    }
+    const animTarget = {
+        drawImage: function () { targetDrawCalls.push({ overlay: true }); }
+    };
+    animCache.render(animTarget, animFloor, 10, 20, { w: 2, h: 2 }, {
+        tw: 32,
+        th: 32,
+        timeSec: 2.1,
+        allocSurface: mockAllocSurface,
+        drawPlacement: drawAnim
+    });
+    const staticDraws = animDrawn.filter((d) => !d.cycling);
+    const overlayDraws = animDrawn.filter((d) => d.cycling);
+    assert.ok(staticDraws.length > 0, 'static tiles still paint into cache');
+    assert.ok(overlayDraws.length > 0, 'cycling tiles paint on overlay');
+    assert.ok(overlayDraws.every((d) => d.frame === 2), 'overlay uses current anim frame');
+    assert.ok(animCache.overlay, 'anim overlay surface exists');
+
     console.log('ok visual_map');
 }
 

@@ -639,8 +639,8 @@ body.play-app canvas#world {
 }
 
 .ctx-menu {
-    position: absolute;
-    z-index: 8;
+    position: fixed;
+    z-index: 1400;
     min-width: 120px;
     background: var(--bg-raise);
     border: 1px solid var(--line);

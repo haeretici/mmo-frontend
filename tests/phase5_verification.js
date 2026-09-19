@@ -88,6 +88,10 @@ function testResponsiveAndFullscreen() {
     // Action bar dock wrappers
     assert.ok(playHtml.includes('id="actionBarDockTop"'), 'play.html has actionBarDockTop');
     assert.ok(playHtml.includes('id="actionBarDockBottom"'), 'play.html has actionBarDockBottom');
+    assert.ok(playHtml.includes('/js/action_bars.js'), 'play.html loads action_bars.js');
+    assert.ok(playHtml.includes('/js/action_bar_assign.js'), 'play.html loads action_bar_assign.js');
+    assert.ok(playJs.includes('data-item-id') || playJs.includes('dataset.itemId'), 'play.js stamps data-item-id for assign pick');
+    assert.ok(playJs.includes('tryHandleSlotDrop'), 'play.js drop fallback binds action-bar slots');
     assert.ok(playHtml.includes('id="actionBarDockLeft"'), 'play.html has actionBarDockLeft');
     assert.ok(playHtml.includes('id="actionBarDockRight"'), 'play.html has actionBarDockRight');
 
@@ -108,6 +112,22 @@ function testResponsiveAndFullscreen() {
     assert.ok(css.includes(':fullscreen'), 'app.css has :fullscreen container rules');
     assert.ok(css.includes('@media'), 'app.css has responsive @media rules');
     assert.ok(css.includes('.play-shell'), 'app.css styles .play-shell');
+
+    // System FCT is canvas text over the player, not a flex HUD box.
+    // #fct / death overlay the canvas; they must not sit beside it.
+    assert.ok(/function fct\([\s\S]{0,500}CombatFx\.pushFct/.test(playJs), 'fct() uses canvas CombatFx');
+    assert.ok(playJs.includes("color: '#f59e0b'"), 'fct() uses system-float color');
+    assert.ok(/\.fct\{[^}]*position:absolute/.test(css), 'app.css overlays .fct');
+    assert.ok(/\.death-overlay\{[^}]*position:absolute/.test(css), 'app.css overlays death-overlay');
+    // RMB menu is HuntDL-style: position:fixed at the cursor, hosted on body.
+    assert.ok(/\.ctx-menu\{[^}]*position:fixed/.test(css), 'app.css floats ctx-menu');
+    assert.ok(playJs.includes('function placeCtxMenu'), 'play.js places ctx-menu at cursor');
+    assert.ok(/function showInvMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'inventory RMB uses placeCtxMenu');
+    assert.ok(/function showCanvasMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'canvas RMB uses placeCtxMenu');
+    assert.ok(/function showEquipMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'equip RMB uses placeCtxMenu');
+    assert.ok(!playJs.includes('canvasOverlayRoot'), 'ctx-menu is not canvas-wrapper absolute');
+    assert.ok(playHtml.includes('id="ctx-menu"'), 'play.html has ctx-menu');
+    assert.ok(!/canvas-center-wrapper[\s\S]{0,800}id="ctx-menu"/.test(playHtml), 'ctx-menu is not inside canvas-center-wrapper');
 
     console.log('  ok phase 5: responsive layout & fullscreen toggle behavior');
 }
@@ -221,6 +241,19 @@ function testInventoryActions() {
     assert.ok(playJs.includes('SLOT_PLACEHOLDERS'), 'play.js defines SLOT_PLACEHOLDERS');
     assert.ok(playJs.includes('fa-helmet-safety'), 'play.js includes helmet placeholder icon');
     assert.ok(playJs.includes('fa-shoe-prints'), 'play.js includes boots placeholder icon');
+    assert.ok(playJs.includes('function entityPresentPx'), 'HUD/sprite share bob+recoil origin');
+    assert.ok(playJs.includes('function showItemPopover'), 'item popover from equipment.json');
+    assert.ok(playJs.includes('function showStackSplitModal'), 'split-count drag modal');
+    assert.ok(playJs.includes('function resolveStackMoveAmount'), 'split-count modifiers');
+    assert.ok(playJs.includes('function makeItemRow'), 'loot/shop rows use item sprites');
+    assert.ok(playJs.includes("pin.kind === 'door' && (pin.flags & 1)"), 'closed door blocking bit matches server flags');
+
+    const playHtml = fs.readFileSync(path.join(FRONTEND_ROOT, 'static/play.html'), 'utf8');
+    assert.ok(playHtml.includes('id="item-popover"'), 'play.html has item-popover');
+    const css = fs.readFileSync(APP_CSS, 'utf8');
+    assert.ok(/\.item-popover\{[^}]*position:fixed/.test(css), 'item-popover is viewport-fixed');
+    assert.ok(css.includes('.inv-stack-split-modal'), 'split modal CSS landed');
+    assert.ok(css.includes('.inv-item-row'), 'loot/shop sprite row CSS landed');
 
     console.log('  ok phase 5: inventory actions (equip, unequip, use, open bag, move, tooltips, sprites)');
 }

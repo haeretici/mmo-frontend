@@ -100,7 +100,6 @@
                         <p>You are dead.</p>
                         <p class="play-hint">Respawning…</p>
                     </div>
-                    <div id="ctx-menu" class="ctx-menu" hidden></div>
                 </div>
                 <div id="actionBarDockRight" class="action-bar-dock action-bar-dock--vertical action-bar-dock--right"></div>
             </div>
@@ -357,6 +356,8 @@
     </aside>
     </div>
 </div>
+<div id="ctx-menu" class="ctx-menu inv-context-menu" hidden></div>
+<div id="item-popover" class="item-popover" hidden></div>
 <div id="profile-modal" class="modal" hidden>
     <div class="modal-dialog">
         <header>
@@ -372,6 +373,7 @@
 <script src="/js/protocol.js"></script>
 <script src="/js/mouse_dispatcher.js"></script>
 <script src="/js/path_walk.js"></script>
+<script src="/js/area_centers.js"></script>
 <script src="/js/keyboard_walk.js"></script>
 <script src="/js/tile_draw.js"></script>
 <script src="/js/sprites.js"></script>
@@ -380,6 +382,8 @@
 <script src="/js/ground_renderer.js"></script>
 <script src="/js/sprite_presentation.js"></script>
 <script src="/js/combat_fx.js"></script>
+<script src="/js/action_bar_assign.js"></script>
+<script src="/js/action_bars.js"></script>
 <script src="/js/play.js"></script>
 </body>
 </html>
