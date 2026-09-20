@@ -770,8 +770,114 @@ canvas#world {
 }
 
 .inv-npc-dialog-panel.is-shop {
-  min-width: 260px;
-  max-width: 340px;
+  min-width: 270px;
+  max-width: 350px;
+  max-height: min(85vh, 520px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+
+  .float-body,
+  .inv-npc-dialog-body {
+    padding: 8px 10px;
+    max-height: none;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .inv-npc-shop {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .inv-npc-shop-list {
+    flex: 0 1 auto;
+    min-height: 3.5rem;
+    max-height: 130px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .inv-npc-shop-row {
+    min-height: 28px;
+  }
+
+  .inv-npc-shop-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.75rem;
+    color: var(--text-main, #{$text-main});
+    overflow: visible;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.25;
+  }
+
+  .inv-npc-shop-deal {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+  }
+
+  .inv-npc-shop-deal-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.4rem 0.55rem;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--border-color, #{$border-color});
+    border-radius: 4px;
+    margin: 0.2rem 0;
+  }
+
+  .inv-npc-shop-deal-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-main, #{$text-main});
+    line-height: 1.35;
+  }
+
+  .inv-npc-shop-deal-label {
+    color: var(--text-muted, #{$text-muted});
+    font-size: 0.72rem;
+  }
+
+  .inv-npc-shop-unit-price,
+  .inv-npc-shop-total {
+    font-family: var(--font-mono, #{$font-mono});
+    text-align: right;
+    color: var(--text-main, #{$text-main});
+    font-weight: 600;
+  }
+
+  .inv-npc-shop-currency {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    color: var(--text-main, #{$text-main});
+    margin-top: 0.15rem;
+    padding-top: 0.25rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+
+    .inv-npc-shop-currency-val {
+      font-family: var(--font-mono, #{$font-mono});
+      color: #fbbf24;
+      font-weight: 600;
+      text-align: right;
+    }
+  }
+
+  .inv-npc-shop-back {
+    flex-shrink: 0;
+  }
 }
 
 // Canvas-center siblings must overlay. The wrapper is a flex row; in-flow

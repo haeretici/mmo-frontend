@@ -45,6 +45,7 @@ const Visual = EngineVisual;
 const KeyWalk = EngineKeyboardWalk;
 const Hud = EngineEntityHud;
 const FloatPlace = typeof EngineFloatPanelPlace !== 'undefined' ? EngineFloatPanelPlace : null;
+const NpcShopUi = typeof EngineNpcShopUi !== 'undefined' ? EngineNpcShopUi : (typeof require === 'function' ? require('./npc_shop_ui.js') : null);
 const Ground = typeof EngineGroundRenderer !== 'undefined' ? EngineGroundRenderer : null;
 const SpritePres = typeof EngineSpritePresentation !== 'undefined' ? EngineSpritePresentation : null;
 const CombatFx = typeof EngineCombatFx !== 'undefined' ? EngineCombatFx : null;
@@ -79,6 +80,8 @@ let capMax = null;
 let skills = null;
 let talkNpc = 0;
 let shopNpc = 0;
+let currentShop = null;
+let shopUiState = null;
 let pingTimer = 0;
 let targetId = 0;
 let hoveredEntityId = 0;
@@ -1948,39 +1951,460 @@ function makeItemRow(opts) {
     return b;
 }
 
+function ensureShopUiState(npcId) {
+    if (!shopUiState || String(shopUiState.npcId) !== String(npcId)) {
+        shopUiState = {
+            npcId: npcId,
+            side: 'buy',
+            search: '',
+            selectedItemId: null,
+            amount: 1
+        };
+    }
+}
+
+function countPlayerItem(itemId) {
+    const id = String(itemId || '');
+    if (!id) return 0;
+    let n = 0;
+    if (bag && Array.isArray(bag.slots)) {
+        for (let i = 0; i < bag.slots.length; i++) {
+            const s = bag.slots[i];
+            if (s && s.id === id) n += (s.count | 0) > 0 ? (s.count | 0) : 1;
+        }
+    }
+    if (typeof openBags !== 'undefined' && openBags && typeof openBags.values === 'function') {
+        for (const ob of openBags.values()) {
+            if (!ob || !Array.isArray(ob.slots)) continue;
+            if (bag && ob.containerId && ob.containerId === bag.containerId) continue;
+            for (let i = 0; i < ob.slots.length; i++) {
+                const s = ob.slots[i];
+                if (s && s.id === id) n += (s.count | 0) > 0 ? (s.count | 0) : 1;
+            }
+        }
+    }
+    return n;
+}
+
+function makeShopRow(row, side) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'inv-npc-shop-row';
+    rowEl.dataset.itemId = row.itemId;
+    rowEl.dataset.shopSide = side;
+
+    const img = makeItemSprite(row.itemId);
+    img.className = 'inv-npc-shop-icon';
+    rowEl.appendChild(img);
+
+    const name = document.createElement('span');
+    name.className = 'inv-npc-shop-name';
+    name.textContent = (NpcShopUi && typeof NpcShopUi.shopItemLabel === 'function')
+        ? NpcShopUi.shopItemLabel(row.itemId, itemLabel)
+        : itemLabel(row.itemId);
+    rowEl.appendChild(name);
+
+    const price = document.createElement('span');
+    price.className = 'inv-npc-shop-price';
+    price.textContent = String(side === 'sell' ? row.sell : row.buy);
+    rowEl.appendChild(price);
+
+    if (side === 'sell') {
+        const have = document.createElement('span');
+        have.className = 'inv-npc-shop-have';
+        have.textContent = String(countPlayerItem(row.itemId));
+        rowEl.appendChild(have);
+    }
+
+    bindItemPopover(rowEl, row.itemId, 1);
+    return rowEl;
+}
+
+function makeShopDeal() {
+    const root = document.createElement('div');
+    root.className = 'inv-npc-shop-deal';
+
+    const amountRow = document.createElement('div');
+    amountRow.className = 'inv-npc-shop-amount-row';
+
+    const dec = document.createElement('button');
+    dec.type = 'button';
+    dec.className = 'inv-npc-shop-amount-dec';
+    dec.setAttribute('aria-label', 'Decrease amount');
+    dec.textContent = '\u2212';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'inv-npc-shop-amount-slider';
+    slider.min = '1';
+    slider.max = '1';
+    slider.value = '1';
+    slider.step = '1';
+
+    const amountInput = document.createElement('input');
+    amountInput.type = 'number';
+    amountInput.className = 'inv-npc-shop-amount-input';
+    amountInput.min = '1';
+    amountInput.value = '1';
+    amountInput.setAttribute('aria-label', 'Amount');
+
+    const inc = document.createElement('button');
+    inc.type = 'button';
+    inc.className = 'inv-npc-shop-amount-inc';
+    inc.setAttribute('aria-label', 'Increase amount');
+    inc.textContent = '+';
+
+    amountRow.appendChild(dec);
+    amountRow.appendChild(slider);
+    amountRow.appendChild(amountInput);
+    amountRow.appendChild(inc);
+    root.appendChild(amountRow);
+
+    const meta = document.createElement('div');
+    meta.className = 'inv-npc-shop-deal-meta';
+
+    function addDealMetaRow(parent, label, valueClass) {
+        const row = document.createElement('div');
+        row.className = 'inv-npc-shop-deal-row';
+        const lab = document.createElement('span');
+        lab.className = 'inv-npc-shop-deal-label';
+        lab.textContent = label;
+        const val = document.createElement('span');
+        val.className = valueClass;
+        val.textContent = '—';
+        row.appendChild(lab);
+        row.appendChild(val);
+        parent.appendChild(row);
+        return val;
+    }
+
+    const price = addDealMetaRow(meta, 'Price', 'inv-npc-shop-unit-price');
+    const total = addDealMetaRow(meta, 'Total', 'inv-npc-shop-total');
+
+    const currency = document.createElement('div');
+    currency.className = 'inv-npc-shop-deal-row inv-npc-shop-currency';
+    const curLabel = document.createElement('span');
+    curLabel.className = 'inv-npc-shop-deal-label';
+    const curVal = document.createElement('span');
+    curVal.className = 'inv-npc-shop-currency-val';
+    currency.appendChild(curLabel);
+    currency.appendChild(curVal);
+    meta.appendChild(currency);
+    root.appendChild(meta);
+
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'inv-npc-shop-confirm inv-npc-shop-buy';
+    confirm.textContent = 'Buy';
+    root.appendChild(confirm);
+
+    return {
+        root,
+        amountRow,
+        dec,
+        slider,
+        amountInput,
+        inc,
+        price,
+        total,
+        currency,
+        currencyLabel: curLabel,
+        currencyVal: curVal,
+        confirm
+    };
+}
+
+function buildShopUi(panel, body) {
+    if (!panel || !body || !currentShop) return;
+    body.textContent = '';
+
+    const shop = currentShop;
+    const ui = shopUiState;
+
+    const shopEl = document.createElement('div');
+    shopEl.className = 'inv-npc-shop';
+
+    const tabs = document.createElement('div');
+    tabs.className = 'inv-npc-shop-tabs';
+    tabs.setAttribute('role', 'tablist');
+
+    function makeShopTab(side, active) {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'inv-npc-shop-tab' + (active ? ' is-active' : '');
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-pressed', active ? 'true' : 'false');
+        tab.dataset.shopSide = side;
+        tab.textContent = side === 'sell' ? 'Sell' : 'Buy';
+        tab.addEventListener('click', () => {
+            if (ui.side === side) return;
+            ui.side = side;
+            ui.search = '';
+            ui.selectedItemId = null;
+            ui.amount = 1;
+            buildShopUi(panel, body);
+        });
+        return tab;
+    }
+
+    tabs.appendChild(makeShopTab('buy', ui.side === 'buy'));
+    tabs.appendChild(makeShopTab('sell', ui.side === 'sell'));
+    shopEl.appendChild(tabs);
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'inv-npc-shop-search';
+    search.placeholder = 'Search';
+    search.setAttribute('aria-label', 'Search');
+    search.value = ui.search || '';
+    shopEl.appendChild(search);
+
+    const listEl = document.createElement('div');
+    listEl.className = 'inv-npc-shop-list';
+    shopEl.appendChild(listEl);
+
+    const deal = makeShopDeal();
+    shopEl.appendChild(deal.root);
+
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'inv-npc-shop-back';
+    back.textContent = 'Back';
+    back.addEventListener('click', () => {
+        hideFloat('npc-shop');
+        shopNpc = 0;
+        shopUiState = null;
+        currentShop = null;
+        if (talkNpc) {
+            placeFloat($('npc-dialog'), talkNpc);
+        }
+    });
+    shopEl.appendChild(back);
+
+    body.appendChild(shopEl);
+
+    function sideRows() {
+        const list = shop ? shop.items : [];
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+            const it = list[i];
+            if (!it) continue;
+            if (ui.side === 'buy' && it.buy > 0) out.push(it);
+            else if (ui.side === 'sell' && it.sell > 0) out.push(it);
+        }
+        return out;
+    }
+
+    function visibleRows() {
+        if (NpcShopUi && typeof NpcShopUi.filterShopRowsByName === 'function') {
+            return NpcShopUi.filterShopRowsByName(sideRows(), ui.search, itemLabel);
+        }
+        const q = String(ui.search || '').trim().toLowerCase();
+        const rows = sideRows();
+        if (!q) return rows;
+        return rows.filter((r) => {
+            const id = String(r.itemId || '').toLowerCase();
+            const label = itemLabel(r.itemId).toLowerCase();
+            return id.includes(q) || label.includes(q);
+        });
+    }
+
+    function selectedRow() {
+        const rows = visibleRows();
+        if (ui.selectedItemId) {
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i].itemId === ui.selectedItemId) return rows[i];
+            }
+        }
+        return rows[0] || null;
+    }
+
+    function currentMax() {
+        if (NpcShopUi && typeof NpcShopUi.shopDealMax === 'function') {
+            return NpcShopUi.shopDealMax(countPlayerItem, shop, selectedRow(), ui.side);
+        }
+        return 1;
+    }
+
+    function unitPrice(row) {
+        if (!row) return 0;
+        return ui.side === 'sell' ? (row.sell | 0) : (row.buy | 0);
+    }
+
+    function canAfford(row) {
+        if (!row) return false;
+        if (NpcShopUi && typeof NpcShopUi.canAffordShopRow === 'function') {
+            return NpcShopUi.canAffordShopRow(countPlayerItem, shop, row, ui.side);
+        }
+        if (ui.side === 'sell') return countPlayerItem(row.itemId) > 0;
+        return countPlayerItem(shop.currency) >= unitPrice(row);
+    }
+
+    function applyAmount(n) {
+        const max = currentMax();
+        const clampFn = (NpcShopUi && typeof NpcShopUi.clampShopAmount === 'function')
+            ? NpcShopUi.clampShopAmount
+            : (v, lo, hi) => Math.max(lo, Math.min(hi, Math.floor(Number(v)) || lo));
+        ui.amount = clampFn(n, 1, max);
+        deal.slider.min = '1';
+        deal.slider.max = String(max);
+        deal.slider.value = String(ui.amount);
+        deal.amountInput.min = '1';
+        deal.amountInput.max = String(max);
+        deal.amountInput.value = String(ui.amount);
+
+        const row = selectedRow();
+        const unit = unitPrice(row);
+        deal.price.textContent = row ? String(unit) : '—';
+        deal.total.textContent = row ? String(unit * ui.amount) : '—';
+        const coinLabel = itemLabel(shop.currency) || shop.currency;
+        if (deal.currencyLabel && deal.currencyVal) {
+            deal.currencyLabel.textContent = coinLabel + ': ';
+            deal.currencyVal.textContent = String(countPlayerItem(shop.currency));
+        } else {
+            deal.currency.textContent = coinLabel + ': ' + String(countPlayerItem(shop.currency));
+        }
+
+        const sideClass = ui.side === 'sell' ? 'inv-npc-shop-sell' : 'inv-npc-shop-buy';
+        deal.confirm.className = 'inv-npc-shop-confirm ' + sideClass;
+        deal.confirm.textContent = ui.side === 'sell' ? 'Sell' : 'Buy';
+        deal.confirm.dataset.shopSide = ui.side;
+        if (row) {
+            deal.confirm.dataset.itemId = row.itemId;
+            deal.confirm.disabled = false;
+        } else {
+            deal.confirm.dataset.itemId = '';
+            deal.confirm.disabled = true;
+        }
+    }
+
+    function refreshList() {
+        const rows = visibleRows();
+        const prevId = ui.selectedItemId;
+        const picked = selectedRow();
+        ui.selectedItemId = picked ? picked.itemId : null;
+        if (picked && picked.itemId !== prevId) {
+            const defFn = (NpcShopUi && typeof NpcShopUi.defaultShopAmount === 'function')
+                ? NpcShopUi.defaultShopAmount
+                : (side, cap) => (side === 'sell' ? cap : 1);
+            ui.amount = defFn(ui.side, currentMax());
+        }
+        while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+        if (!rows.length) {
+            const empty = document.createElement('div');
+            empty.className = 'inv-npc-shop-empty';
+            empty.textContent = ui.search ? 'No matching items.' : (ui.side === 'sell' ? 'Nothing to sell.' : 'Nothing to buy.');
+            listEl.appendChild(empty);
+        }
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowEl = makeShopRow(row, ui.side);
+            if (picked && row.itemId === picked.itemId) {
+                rowEl.classList.add('is-selected');
+            }
+            if (!canAfford(row)) {
+                rowEl.classList.add('is-unaffordable');
+            }
+            rowEl.addEventListener('click', () => {
+                const same = ui.selectedItemId === row.itemId;
+                ui.selectedItemId = row.itemId;
+                if (!same) {
+                    const defFn = (NpcShopUi && typeof NpcShopUi.defaultShopAmount === 'function')
+                        ? NpcShopUi.defaultShopAmount
+                        : (side, cap) => (side === 'sell' ? cap : 1);
+                    ui.amount = defFn(ui.side, currentMax());
+                }
+                refreshList();
+            });
+            listEl.appendChild(rowEl);
+        }
+        applyAmount(ui.amount);
+    }
+
+    search.addEventListener('input', () => {
+        ui.search = search.value != null ? String(search.value) : '';
+        refreshList();
+    });
+    search.addEventListener('change', () => {
+        ui.search = search.value != null ? String(search.value) : '';
+        refreshList();
+    });
+
+    deal.slider.addEventListener('input', () => {
+        applyAmount(deal.slider.value);
+    });
+    deal.amountInput.addEventListener('input', () => {
+        applyAmount(deal.amountInput.value);
+    });
+    deal.amountInput.addEventListener('change', () => {
+        applyAmount(deal.amountInput.value);
+    });
+    deal.amountInput.addEventListener('keydown', (ev) => {
+        const key = ev && ev.key;
+        if (key !== 'ArrowUp' && key !== 'Up' && key !== 'ArrowDown' && key !== 'Down') {
+            return;
+        }
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        const dir = (key === 'ArrowDown' || key === 'Down') ? -1 : 1;
+        const deltaFn = (NpcShopUi && typeof NpcShopUi.applyShopAmountDelta === 'function')
+            ? NpcShopUi.applyShopAmountDelta
+            : (curr, d) => Math.max(1, curr + d);
+        applyAmount(deltaFn(ui.amount, dir, ev, 1, currentMax()));
+    });
+    deal.dec.addEventListener('click', (ev) => {
+        const deltaFn = (NpcShopUi && typeof NpcShopUi.applyShopAmountDelta === 'function')
+            ? NpcShopUi.applyShopAmountDelta
+            : (curr, d) => Math.max(1, curr + d);
+        applyAmount(deltaFn(ui.amount, -1, ev, 1, currentMax()));
+    });
+    deal.inc.addEventListener('click', (ev) => {
+        const deltaFn = (NpcShopUi && typeof NpcShopUi.applyShopAmountDelta === 'function')
+            ? NpcShopUi.applyShopAmountDelta
+            : (curr, d) => Math.max(1, curr + d);
+        applyAmount(deltaFn(ui.amount, 1, ev, 1, currentMax()));
+    });
+    deal.amountRow.addEventListener('wheel', (ev) => {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        const dir = ev && ev.deltaY < 0 ? 1 : -1;
+        const deltaFn = (NpcShopUi && typeof NpcShopUi.applyShopAmountDelta === 'function')
+            ? NpcShopUi.applyShopAmountDelta
+            : (curr, d) => Math.max(1, curr + d);
+        applyAmount(deltaFn(ui.amount, dir, ev, 1, currentMax()));
+    }, { passive: false });
+
+    deal.confirm.addEventListener('click', () => {
+        const row = selectedRow();
+        if (!row) return;
+        const opcode = ui.side === 'sell' ? C2S.SHOP_SELL : C2S.SHOP_BUY;
+        send(opcode, encodeStrPayload(shopNpc, ui.amount, row.itemId));
+    });
+
+    if (!ui.selectedItemId) {
+        const first = visibleRows()[0];
+        if (first) {
+            ui.selectedItemId = first.itemId;
+            const defFn = (NpcShopUi && typeof NpcShopUi.defaultShopAmount === 'function')
+                ? NpcShopUi.defaultShopAmount
+                : (side, cap) => (side === 'sell' ? cap : 1);
+            ui.amount = defFn(ui.side, currentMax());
+        }
+    }
+
+    refreshList();
+}
+
 function renderShop(currency, items) {
     const panel = $('npc-shop');
     const body = $('shop-body');
     if (!panel || !body) return;
-    body.textContent = '';
-    const cap = document.createElement('div');
-    cap.className = 'text-muted small mb-2';
-    cap.textContent = 'Currency: ' + currency;
-    body.appendChild(cap);
-    items.forEach(function (it) {
-        const label = itemLabel(it.itemId);
-        if (it.buy > 0) {
-            body.appendChild(makeItemRow({
-                itemId: it.itemId,
-                count: 1,
-                label: 'Buy ' + label,
-                badge: it.buy + ' ' + currency,
-                className: 'is-buy',
-                onclick: function () { send(C2S.SHOP_BUY, encodeStrPayload(shopNpc, 1, it.itemId)); }
-            }));
-        }
-        if (it.sell > 0) {
-            body.appendChild(makeItemRow({
-                itemId: it.itemId,
-                count: 1,
-                label: 'Sell ' + label,
-                badge: it.sell + ' ' + currency,
-                className: 'is-sell',
-                onclick: function () { send(C2S.SHOP_SELL, encodeStrPayload(shopNpc, 1, it.itemId)); }
-            }));
-        }
-    });
-    placeFloat(panel, shopNpc);
+
+    currentShop = { currency: currency || 'gold_coin', items: Array.isArray(items) ? items : [] };
+    ensureShopUiState(shopNpc);
+
+    buildShopUi(panel, body);
+
+    if (panel.hidden) {
+        placeFloat(panel, shopNpc);
+    }
 }
 
 function renderLoot(items) {
@@ -3677,6 +4101,10 @@ function onFrame(bytes, tokenHex) {
         bag = readBagView(r);
         selectedBag = -1;
         renderBag();
+        const shopPanel = $('npc-shop');
+        if (shopPanel && !shopPanel.hidden && currentShop) {
+            buildShopUi(shopPanel, $('shop-body'));
+        }
         return;
     }
     if (opcode === S2C.EQUIPMENT) {
@@ -3693,6 +4121,10 @@ function onFrame(bytes, tokenHex) {
     }
     if (opcode === S2C.BAG) {
         applyBagView(readBagView(r));
+        const shopPanel = $('npc-shop');
+        if (shopPanel && !shopPanel.hidden && currentShop) {
+            buildShopUi(shopPanel, $('shop-body'));
+        }
         return;
     }
     if (opcode === S2C.SKILLS) {
@@ -3741,6 +4173,9 @@ function onFrame(bytes, tokenHex) {
     if (opcode === S2C.DIALOG_CLOSE) {
         r.u32();
         talkNpc = 0;
+        shopNpc = 0;
+        shopUiState = null;
+        currentShop = null;
         hideFloat('npc-dialog');
         hideFloat('npc-shop');
         return;
@@ -4451,6 +4886,9 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     $('shop-close') && $('shop-close').addEventListener('click', function () {
         hideFloat('npc-shop');
+        shopNpc = 0;
+        shopUiState = null;
+        currentShop = null;
     });
     $('loot-close') && $('loot-close').addEventListener('click', function () {
         if (openCorpse) send(C2S.LOOT_CLOSE, u32buf(openCorpse));
