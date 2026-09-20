@@ -324,6 +324,10 @@ function testInventoryActions() {
     assert.ok(/\.item-popover\{[^}]*position:fixed/.test(css), 'item-popover is viewport-fixed');
     assert.ok(css.includes('.inv-stack-split-modal'), 'split modal CSS landed');
     assert.ok(css.includes('.inv-item-row'), 'loot/shop sprite row CSS landed');
+    assert.ok(css.includes('.ground-drag-avatar'), 'ground drag avatar CSS landed');
+    assert.ok(playJs.includes('groundDragAvatar'), 'play.js tracks groundDragAvatar');
+    assert.ok(playJs.includes('function updateGroundDragAvatar'), 'play.js defines updateGroundDragAvatar');
+    assert.ok(playJs.includes('function removeGroundDragAvatar'), 'play.js defines removeGroundDragAvatar');
 
     console.log('  ok phase 5: inventory actions (equip, unequip, use, open bag, move, tooltips, sprites)');
 }

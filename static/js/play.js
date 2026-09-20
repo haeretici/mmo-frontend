@@ -60,6 +60,7 @@ let worldPins = new Map();
 let groundItems = new Map();
 let groundByUid = new Map();
 let groundDrag = null;
+let groundDragAvatar = null;
 let fields = new Map();
 let pendingUseWith = null;
 let seenAt = new Map();
@@ -580,7 +581,11 @@ function removeGroundUid(uid) {
     if (!uid) return;
     const prev = groundByUid.get(uid);
     groundByUid.delete(uid);
-    if (groundDrag && groundDrag.uid === uid) groundDrag = null;
+    if (groundDrag && groundDrag.uid === uid) {
+        groundDrag = null;
+        currentDrag = null;
+        removeGroundDragAvatar();
+    }
     if (prev) rebuildGroundTile(prev.x, prev.y, prev.z);
 }
 
@@ -2961,11 +2966,79 @@ function getEntityAtPixel(px, py, z) {
     return best;
 }
 
+function removeGroundDragAvatar() {
+    if (groundDragAvatar) {
+        groundDragAvatar.remove();
+        groundDragAvatar = null;
+    }
+    document.querySelectorAll('.drag-over').forEach(function (el) {
+        el.classList.remove('drag-over');
+    });
+}
+
+function updateGroundDragAvatar(ev) {
+    if (!groundDrag) return;
+    const dx = Math.abs(ev.clientX - groundDrag.startX);
+    const dy = Math.abs(ev.clientY - groundDrag.startY);
+    if (!groundDrag.dragging && (dx > 4 || dy > 4)) {
+        groundDrag.dragging = true;
+    }
+    if (!groundDrag.dragging) return;
+
+    const item = groundDrag.item;
+    const itemId = item && item.id ? item.id : '';
+    const count = item && item.count ? item.count | 0 : 1;
+
+    if (!groundDragAvatar) {
+        const avatar = document.createElement('div');
+        avatar.id = 'ground-drag-avatar';
+        avatar.className = 'ground-drag-avatar inv-slot is-filled';
+        avatar.style.position = 'fixed';
+        avatar.style.pointerEvents = 'none';
+        avatar.style.zIndex = '10000';
+        avatar.style.transform = 'translate(-50%, -50%)';
+        avatar.style.left = ev.clientX + 'px';
+        avatar.style.top = ev.clientY + 'px';
+
+        const img = document.createElement('img');
+        img.src = resolveItemSpriteUrl(itemId, visualGenre());
+        img.alt = itemLabel(itemId);
+        img.draggable = false;
+        img.onerror = function () { this.style.display = 'none'; };
+        avatar.appendChild(img);
+
+        if (count > 1) {
+            const badge = document.createElement('span');
+            badge.className = 'inv-stack-count';
+            badge.textContent = String(count);
+            avatar.appendChild(badge);
+        }
+
+        const host = typeof ctxMenuHost === 'function' ? ctxMenuHost() : document.body;
+        if (host) host.appendChild(avatar);
+        groundDragAvatar = avatar;
+    } else {
+        groundDragAvatar.style.left = ev.clientX + 'px';
+        groundDragAvatar.style.top = ev.clientY + 'px';
+    }
+
+    const under = typeof document !== 'undefined'
+        ? document.elementFromPoint(ev.clientX, ev.clientY)
+        : null;
+    const targetSlot = under && typeof under.closest === 'function'
+        ? under.closest('.inv-slot, .backpack-slot, .slot-item, [data-slot-index], [data-inv-index], [data-slot], [data-eq-slot], .action-bar-slot')
+        : null;
+    document.querySelectorAll('.drag-over').forEach(function (el) {
+        if (el !== targetSlot) el.classList.remove('drag-over');
+    });
+    if (targetSlot) {
+        targetSlot.classList.add('drag-over');
+    }
+}
+
 function onCanvasPointerMove(ev) {
-    if (groundDrag && !groundDrag.dragging) {
-        const dx = Math.abs(ev.clientX - groundDrag.startX);
-        const dy = Math.abs(ev.clientY - groundDrag.startY);
-        if (dx > 4 || dy > 4) groundDrag.dragging = true;
+    if (groundDrag) {
+        updateGroundDragAvatar(ev);
     }
     if (!canvas || (!viewport && !self)) return;
     const rect = canvas.getBoundingClientRect();
@@ -2993,11 +3066,18 @@ function onCanvasPointerLeave() {
 function finishCanvasGroundDrag(ev) {
     const drag = groundDrag;
     groundDrag = null;
+    removeGroundDragAvatar();
     if (!drag || !drag.dragging) return false;
     if (!groundByUid.has(drag.uid)) return true;
     const under = typeof document !== 'undefined'
         ? document.elementFromPoint(ev.clientX, ev.clientY)
         : null;
+    if (under && typeof EngineActionBars !== 'undefined'
+        && typeof EngineActionBars.tryHandleSlotDrop === 'function') {
+        if (drag.item && drag.item.id && EngineActionBars.tryHandleSlotDrop(under, drag.item.id)) {
+            return true;
+        }
+    }
     if (under && typeof under.closest === 'function') {
         const slot = under.closest('.inv-slot, .backpack-slot, .slot-item, [data-slot-index], [data-inv-index], [data-slot], [data-eq-slot]');
         if (slot) {
@@ -3153,6 +3233,7 @@ function onCanvasPointerUp(ev) {
         const hit = drag.hit;
         groundDrag = null;
         currentDrag = null;
+        removeGroundDragAvatar();
         const intents = Mouse.processMouseAction({
             button: 'left',
             mode: mouse.mouseControlMode,
@@ -3742,6 +3823,7 @@ function connect(cfg, tokenHex) {
     groundItems = new Map();
     groundByUid = new Map();
     groundDrag = null;
+    removeGroundDragAvatar();
     fields = new Map();
     pendingUseWith = null;
     seenAt = new Map();
@@ -3894,11 +3976,21 @@ window.addEventListener('pointerup', function (ev) {
         }, 150);
     }
 });
+window.addEventListener('pointermove', function (ev) {
+    if (groundDrag) {
+        updateGroundDragAvatar(ev);
+    }
+});
 window.addEventListener('pointercancel', function (ev) {
     if (ev.button === 0) buttonsDown.left = false;
     if (ev.button === 2) buttonsDown.right = false;
     suppressNextCanvasClick = false;
     suppressNextDocClick = false;
+    if (groundDrag) {
+        groundDrag = null;
+        currentDrag = null;
+        removeGroundDragAvatar();
+    }
 });
 
 window.addEventListener('keydown', function (ev) {
@@ -3909,6 +4001,11 @@ window.addEventListener('keydown', function (ev) {
         keyWalk.reset();
         stopWalk();
         hideCtx();
+        if (groundDrag) {
+            groundDrag = null;
+            currentDrag = null;
+            removeGroundDragAvatar();
+        }
         if (talkNpc) send(C2S.TALK_CLOSE, u32buf(talkNpc));
         return;
     }
@@ -3943,6 +4040,11 @@ window.addEventListener('blur', function () {
     keyWalk.reset();
     suppressNextCanvasClick = false;
     suppressNextDocClick = false;
+    if (groundDrag) {
+        groundDrag = null;
+        currentDrag = null;
+        removeGroundDragAvatar();
+    }
 });
 
 document.addEventListener('click', function (ev) {
