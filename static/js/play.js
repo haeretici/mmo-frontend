@@ -98,6 +98,8 @@ let buttonsDown = { left: false, right: false };
 let cancelNext = false;
 let suppressNextSlotClick = false;
 let suppressNextContextMenu = false;
+let suppressNextCanvasClick = false;
+let suppressNextDocClick = false;
 let fctTimer = 0;
 let lastTick = 0;
 let ups = 20;
@@ -438,7 +440,10 @@ function renderCombat() {
                 selectTarget(row.id);
                 return;
             }
-            applyCombatIntents(intents, row, ev.clientX, ev.clientY);
+            const applied = applyCombatIntents(intents, row, ev.clientX, ev.clientY);
+            if (applied === 'OPEN_CONTEXT_MENU') {
+                ev.stopPropagation();
+            }
         });
         d.addEventListener('contextmenu', function (ev) {
             ev.preventDefault();
@@ -1630,6 +1635,10 @@ function paintGrid(el, view, selectedIndex, kind) {
                 clientX: ev.clientX,
                 clientY: ev.clientY
             });
+            if (applied === 'OPEN_CONTEXT_MENU') {
+                ev.stopPropagation();
+                return;
+            }
             if (applied && applied !== 'SELECT' && applied !== '') return;
             if (kind === 'bag') {
                 selectedBag = it ? (selectedBag === i ? -1 : i) : -1;
@@ -1817,6 +1826,10 @@ function renderEquipment() {
                 clientX: ev.clientX,
                 clientY: ev.clientY
             });
+            if (applied === 'OPEN_CONTEXT_MENU') {
+                ev.stopPropagation();
+                return;
+            }
             if (applied && applied !== 'SELECT' && applied !== '') return;
             if (it) {
                 selectedEquipSlot = (selectedEquipSlot === key ? null : key);
@@ -2792,6 +2805,10 @@ function placeCombatSortDropdown() {
 function showCanvasMenu(hit, clientX, clientY) {
     const el = $('ctx-menu');
     if (!el) return;
+    if (buttonsDown.left) {
+        suppressNextCanvasClick = true;
+        suppressNextDocClick = true;
+    }
     hideItemPopover(true);
     const entries = Mouse.buildCanvasContextMenuEntries(hit);
     el.textContent = '';
@@ -3816,6 +3833,15 @@ if (canvas) {
     canvas.addEventListener('pointerdown', onCanvasPointer);
     canvas.addEventListener('pointermove', onCanvasPointerMove);
     canvas.addEventListener('pointerleave', onCanvasPointerLeave);
+    canvas.addEventListener('click', function (ev) {
+        if (suppressNextCanvasClick) {
+            suppressNextCanvasClick = false;
+            suppressNextDocClick = false;
+            ev.preventDefault();
+            ev.stopPropagation();
+            return;
+        }
+    });
     canvas.addEventListener('dragover', function (ev) {
         if (!currentDrag) return;
         ev.preventDefault();
@@ -3861,10 +3887,18 @@ window.addEventListener('pointerup', function (ev) {
     if (ev.button === 0) buttonsDown.left = false;
     if (ev.button === 2) buttonsDown.right = false;
     onCanvasPointerUp(ev);
+    if (suppressNextCanvasClick || suppressNextDocClick) {
+        setTimeout(function () {
+            suppressNextCanvasClick = false;
+            suppressNextDocClick = false;
+        }, 150);
+    }
 });
 window.addEventListener('pointercancel', function (ev) {
     if (ev.button === 0) buttonsDown.left = false;
     if (ev.button === 2) buttonsDown.right = false;
+    suppressNextCanvasClick = false;
+    suppressNextDocClick = false;
 });
 
 window.addEventListener('keydown', function (ev) {
@@ -3907,9 +3941,15 @@ window.addEventListener('keyup', function (ev) {
 
 window.addEventListener('blur', function () {
     keyWalk.reset();
+    suppressNextCanvasClick = false;
+    suppressNextDocClick = false;
 });
 
 document.addEventListener('click', function (ev) {
+    if (suppressNextDocClick) {
+        suppressNextDocClick = false;
+        return;
+    }
     const t = ev.target;
     const menu = $('ctx-menu');
     if (menu && !menu.hidden && !menu.contains(t)) hideCtx();

@@ -130,6 +130,10 @@ function testResponsiveAndFullscreen() {
     assert.ok(/function placeCombatSortDropdown\([\s\S]{0,600}placeCtxMenu\(el, r\.right, r\.bottom/.test(playJs), 'combat sort dropdown right-aligns then flips');
     assert.ok(/\.combat-sort-dropdown-menu\{[^}]*position:fixed/.test(css), 'combat sort dropdown is viewport-fixed');
     assert.ok(!playJs.includes('canvasOverlayRoot'), 'ctx-menu is not canvas-wrapper absolute');
+    assert.ok(playJs.includes('suppressNextCanvasClick'), 'play.js defines suppressNextCanvasClick');
+    assert.ok(playJs.includes('suppressNextDocClick'), 'play.js defines suppressNextDocClick');
+    assert.ok(/buttonsDown\.left[\s\S]{0,120}suppressNextCanvasClick = true/.test(playJs), 'showCanvasMenu sets suppressNextCanvasClick when buttonsDown.left');
+    assert.ok(/document\.addEventListener\('click'[\s\S]{0,120}if \(suppressNextDocClick\)/.test(playJs), 'document click listener checks suppressNextDocClick');
     assert.ok(playHtml.includes('id="ctx-menu"'), 'play.html has ctx-menu');
     assert.ok(!/canvas-center-wrapper[\s\S]{0,800}id="ctx-menu"/.test(playHtml), 'ctx-menu is not inside canvas-center-wrapper');
 
