@@ -649,6 +649,7 @@ canvas#world {
     margin-bottom: 0.35rem;
     cursor: move;
     user-select: none;
+    touch-action: none;
   }
 
   .inv-panel-title {
@@ -730,6 +731,9 @@ canvas#world {
     background: var(--bg-dark, #{$bg-dark});
     border-bottom: 1px solid var(--border-color, #{$border-color});
     margin-bottom: 0;
+    cursor: move;
+    user-select: none;
+    touch-action: none;
 
     strong,
     .am-sidebar-title {
@@ -739,6 +743,7 @@ canvas#world {
       text-transform: uppercase;
       letter-spacing: 0.5px;
       margin: 0;
+      user-select: none;
     }
 
     .panel-close,

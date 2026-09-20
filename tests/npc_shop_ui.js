@@ -113,11 +113,14 @@ test('resolveItemCount handles function, slot array, and object', () => {
             { id: 'bread', count: 5 },
             { id: 'bread', count: 3 },
             { id: 'torch', count: 1 }
+        ],
+        openBags: [
+            { view: { slots: [{ id: 'bread', count: 4 }, { id: 'gold_coin', count: 100 }] } }
         ]
     };
-    assert.strictEqual(resolveItemCount(slotCounter, 'bread'), 8);
+    assert.strictEqual(resolveItemCount(slotCounter, 'bread'), 12);
     assert.strictEqual(resolveItemCount(slotCounter, 'torch'), 1);
-    assert.strictEqual(resolveItemCount(slotCounter, 'gold_coin'), 0);
+    assert.strictEqual(resolveItemCount(slotCounter, 'gold_coin'), 100);
 });
 
 test('shopDealMax calculates purchase cap and sell stack cap', () => {

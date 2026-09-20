@@ -168,8 +168,11 @@ const context = {
     Array,
     Map,
     Set,
+    OPEN_BAG_SELF_INDEX: protocol.OPEN_BAG_SELF_INDEX || 255,
     C2S: protocol.C2S,
     encodeStrPayload: protocol.encodeStrPayload,
+    encodeCloseBag: protocol.encodeCloseBag,
+    encodeContainerSlot: protocol.encodeContainerSlot,
     makeItemSprite: (id) => {
         const img = makeNode('img');
         img.src = '/items/' + id + '.png';
@@ -201,16 +204,45 @@ vm.runInContext(`
         ]
     };
     const openBags = new Map();
+    const containerCache = new Map();
+    const containerSlotMap = new Map();
+    const bgFetchQueue = [];
+    let pendingOpenFrom = null;
+    let pendingOpenBagItemId = '';
+    let openBag = null;
+    let openBagItemId = '';
+    let selectedBag = -1;
 
     function $(id) {
         return elements[id] || null;
+    }
+    function renderBag() {}
+    function closeAllOpenBags() {}
+    function removeOpenBagWindow(uid) {
+        openBags.delete(uid);
+    }
+    function upsertOpenBagWindow(view, hint) {
+        const rec = { view: view, itemId: hint || '', selected: -1, panel: null, placed: false };
+        openBags.set(view.containerId, rec);
+        return rec;
+    }
+    function focusOpenBagWindow(uid) {}
+    function equipItemIsContainer(s) {
+        return !!(s && (s.flags & 1));
     }
 `, context);
 
 // Extract helper functions from play.js into the vm context
 const extractFns = [
-    'ensureShopUiState',
+    'isGroundOpenBag',
+    'walkPlayerContainers',
     'countPlayerItem',
+    'predictConsumeFromInventory',
+    'queueBackgroundFetch',
+    'drainBgFetchQueue',
+    'checkAndFetchSubContainers',
+    'applyBagView',
+    'ensureShopUiState',
     'makeShopRow',
     'makeShopDeal',
     'buildShopUi',
@@ -397,6 +429,204 @@ test('confirm deal sends SHOP_BUY / SHOP_SELL with specified amount', () => {
     assert.strictEqual(r.u32(), 42, 'npcId');
     assert.strictEqual(r.u16(), 3, 'amount is 3');
     assert.strictEqual(r.str(), 'bread', 'itemId is bread');
+});
+
+test('sell tab counts items in sub-backpacks and nested sub-backpacks, excluding ground bags', () => {
+    const shopBody = context.elements['shop-body'];
+
+    // Setup sub-backpacks in openBags
+    vm.runInContext(`
+        // bag currently has 7 bread and 50 gold_coin
+        openBags.clear();
+        containerCache.clear();
+        containerSlotMap.clear();
+        bag.slots = [
+            { index: 0, id: 'gold_coin', count: 50 },
+            { index: 1, id: 'bread', count: 7 },
+            { index: 2, id: 'backpack', count: 1, flags: 1 }
+        ];
+
+        // sub-backpack 1 inside main bag
+        openBags.set('sub_bag_1', {
+            view: {
+                containerId: 'sub_bag_1',
+                capacity: 10,
+                slots: [
+                    { index: 0, id: 'bread', count: 5 },
+                    { index: 1, id: 'cookie', count: 12 },
+                    { index: 2, id: 'gold_coin', count: 25 },
+                    { index: 3, id: 'backpack', count: 1, flags: 1 }
+                ]
+            },
+            openedFrom: { containerId: 'root', index: 2 }
+        });
+        containerCache.set('sub_bag_1', openBags.get('sub_bag_1').view);
+        containerSlotMap.set('root:2', 'sub_bag_1');
+        openBags.get('sub_bag_1').view.parentContainerId = 'root';
+        openBags.get('sub_bag_1').view.parentSlotIndex = 2;
+
+        // nested sub-backpack 2 inside sub_bag_1
+        openBags.set('sub_bag_2', {
+            view: {
+                containerId: 'sub_bag_2',
+                capacity: 8,
+                slots: [
+                    { index: 0, id: 'bread', count: 3 },
+                    { index: 1, id: 'cookie', count: 8 }
+                ]
+            },
+            openedFrom: { containerId: 'sub_bag_1', index: 3 }
+        });
+        containerCache.set('sub_bag_2', openBags.get('sub_bag_2').view);
+        containerSlotMap.set('sub_bag_1:3', 'sub_bag_2');
+        openBags.get('sub_bag_2').view.parentContainerId = 'sub_bag_1';
+        openBags.get('sub_bag_2').view.parentSlotIndex = 3;
+
+        // ground bag on floor (should NOT be counted)
+        openBags.set('ground_bag_1', {
+            view: {
+                containerId: 'ground_bag_1',
+                capacity: 20,
+                slots: [
+                    { index: 0, id: 'bread', count: 100 },
+                    { index: 1, id: 'iron_sword', count: 5 }
+                ]
+            },
+            openedFrom: { containerId: 'g_tile_1', index: OPEN_BAG_SELF_INDEX }
+        });
+    `, context);
+
+    // Verify countPlayerItem results directly
+    assert.strictEqual(vm.runInContext(`countPlayerItem('bread');`, context), 7 + 5 + 3, 'bread: 7 (root) + 5 (sub1) + 3 (sub2)');
+    assert.strictEqual(vm.runInContext(`countPlayerItem('cookie');`, context), 12 + 8, 'cookie: 12 (sub1) + 8 (sub2)');
+    assert.strictEqual(vm.runInContext(`countPlayerItem('gold_coin');`, context), 50 + 25, 'gold_coin: 50 (root) + 25 (sub1)');
+    assert.strictEqual(vm.runInContext(`countPlayerItem('iron_sword');`, context), 0, 'iron_sword in ground bag is NOT counted');
+
+    // Switch to Sell tab
+    const tabs = shopBody.querySelectorAll('.inv-npc-shop-tab');
+    tabs[1].click();
+
+    const rows = shopBody.querySelectorAll('.inv-npc-shop-row');
+    assert.strictEqual(rows.length, 3);
+
+    // Row 0: bread (total 15)
+    const breadRow = rows[0];
+    assert.strictEqual(breadRow.dataset.itemId, 'bread');
+    assert.strictEqual(breadRow.querySelector('.inv-npc-shop-have').textContent, '15');
+    assert.ok(!breadRow.classList.contains('is-unaffordable'));
+
+    // Row 1: cookie (total 20, only in sub-backpacks)
+    const cookieRow = rows[1];
+    assert.strictEqual(cookieRow.dataset.itemId, 'cookie');
+    assert.strictEqual(cookieRow.querySelector('.inv-npc-shop-have').textContent, '20');
+    assert.ok(!cookieRow.classList.contains('is-unaffordable'), 'cookie in sub-backpacks is affordable to sell');
+
+    // Row 2: iron_sword (0 owned, ground bag ignored)
+    const swordRow = rows[2];
+    assert.strictEqual(swordRow.dataset.itemId, 'iron_sword');
+    assert.strictEqual(swordRow.querySelector('.inv-npc-shop-have').textContent, '0');
+    assert.ok(swordRow.classList.contains('is-unaffordable'), 'iron_sword in ground bag is unaffordable');
+
+    // Select cookie row and verify deal defaults to owned count 20
+    cookieRow.click();
+    assert.strictEqual(shopBody.querySelector('.inv-npc-shop-amount-input').value, '20');
+    assert.strictEqual(shopBody.querySelector('.inv-npc-shop-total').textContent, '20'); // sell price 1 * 20
+
+    // Verify currency display reflects total gold including sub-backpacks (75)
+    assert.strictEqual(shopBody.querySelector('.inv-npc-shop-currency-val').textContent, '75');
+});
+
+test('container cache persists items when window is closed and counts for selling', () => {
+    // Simulate closing sub_bag_1 window
+    vm.runInContext(`
+        removeOpenBagWindow('sub_bag_1');
+    `, context);
+
+    // sub_bag_1 is no longer in openBags
+    assert.strictEqual(vm.runInContext(`openBags.has('sub_bag_1');`, context), false);
+    // But containerCache still has its view
+    assert.strictEqual(vm.runInContext(`containerCache.has('sub_bag_1');`, context), true);
+
+    // Items are still counted via cache!
+    // bread: 7 (root) + 5 (cached sub_bag_1) + 3 (open sub_bag_2) = 15
+    assert.strictEqual(vm.runInContext(`countPlayerItem('bread');`, context), 15);
+    // cookie: 12 (cached sub_bag_1) + 8 (open sub_bag_2) = 20
+    assert.strictEqual(vm.runInContext(`countPlayerItem('cookie');`, context), 20);
+});
+
+test('predictive sell deduction decrements items from cached sub-backpacks', () => {
+    // Predictively consume 6 cookies (12 in sub_bag_1 -> 6 left)
+    vm.runInContext(`
+        predictConsumeFromInventory('cookie', 6);
+    `, context);
+
+    // Remaining cookies: 6 (sub_bag_1) + 8 (sub_bag_2) = 14
+    assert.strictEqual(vm.runInContext(`countPlayerItem('cookie');`, context), 14);
+
+    // Rebuild shop UI and verify updated count in sell tab
+    const shopBody = context.elements['shop-body'];
+    vm.runInContext(`buildShopUi(elements['npc-shop'], elements['shop-body']);`, context);
+
+    const rows = shopBody.querySelectorAll('.inv-npc-shop-row');
+    const cookieRow = rows[1];
+    assert.strictEqual(cookieRow.dataset.itemId, 'cookie');
+    assert.strictEqual(cookieRow.querySelector('.inv-npc-shop-have').textContent, '14');
+});
+
+test('background prefetch fetches uncached sub-backpacks without opening a floating window', () => {
+    sentPackets = [];
+
+    // Setup a new uncached sub-backpack in root bag at slot index 3
+    vm.runInContext(`
+        openBags.clear();
+        containerCache.clear();
+        containerSlotMap.clear();
+        bgFetchQueue.length = 0;
+        pendingOpenFrom = null;
+
+        bag = {
+            containerId: 'root',
+            capacity: 20,
+            slots: [
+                { index: 0, id: 'gold_coin', count: 10 },
+                { index: 3, id: 'backpack', count: 1, flags: 1 } // uncached sub-backpack!
+            ]
+        };
+    `, context);
+
+    // Calling checkAndFetchSubContainers queues and sends OPEN_BAG in the background
+    vm.runInContext(`checkAndFetchSubContainers();`, context);
+
+    assert.strictEqual(sentPackets.length, 1);
+    assert.strictEqual(sentPackets[0].opcode, protocol.C2S.OPEN_BAG);
+
+    // The request was marked isBackground
+    assert.strictEqual(vm.runInContext(`pendingOpenFrom && pendingOpenFrom.isBackground;`, context), true);
+
+    // Simulate server response S2C.BAG for this container with 9 cheese
+    sentPackets = [];
+    vm.runInContext(`
+        applyBagView({
+            containerId: 'sub_bag_auto',
+            capacity: 10,
+            slots: [
+                { index: 0, id: 'cheese', count: 9, flags: 0 }
+            ]
+        });
+    `, context);
+
+    // 1. It is cached in containerCache
+    assert.strictEqual(vm.runInContext(`containerCache.has('sub_bag_auto');`, context), true);
+    // 2. It was linked to root:3
+    assert.strictEqual(vm.runInContext(`containerSlotMap.get('root:3');`, context), 'sub_bag_auto');
+    // 3. It did NOT open a window in openBags
+    assert.strictEqual(vm.runInContext(`openBags.has('sub_bag_auto');`, context), false);
+    // 4. It sent CLOSE_BAG to the server to free open bag slots
+    assert.strictEqual(sentPackets.length, 1);
+    assert.strictEqual(sentPackets[0].opcode, protocol.C2S.CLOSE_BAG);
+
+    // 5. countPlayerItem now knows about the 9 cheese without user having opened any bag!
+    assert.strictEqual(vm.runInContext(`countPlayerItem('cheese');`, context), 9);
 });
 
 if (failed > 0) {

@@ -74,6 +74,9 @@ let pendingOpenBagAnchor = null;
 let pendingOpenFrom = null;
 let floatZ = 0;
 const openBags = new Map();
+const containerCache = new Map();
+const containerSlotMap = new Map();
+const bgFetchQueue = [];
 let equipment = {};
 let capVal = null;
 let capMax = null;
@@ -637,7 +640,7 @@ function requestOpenBag(containerId, index, itemId, originEl) {
     if (!containerId) return;
     pendingOpenBagItemId = itemId || '';
     if (itemId) openBagItemId = itemId;
-    pendingOpenFrom = { containerId: containerId, index: index | 0 };
+    pendingOpenFrom = { containerId: containerId, index: index | 0, isBackground: false };
     rememberOpenBagAnchor(originEl, containerId, index);
     const existingUid = findExistingOpenBagUid(containerId, index | 0);
     if (existingUid) focusOpenBagWindow(existingUid);
@@ -662,6 +665,10 @@ function requestCloseBag(containerId) {
     if (!containerId) closeAllOpenBags();
     else removeOpenBagWindow(containerId);
     renderBag();
+    const shopPanel = $('npc-shop');
+    if (shopPanel && !shopPanel.hidden && currentShop) {
+        buildShopUi(shopPanel, $('shop-body'));
+    }
 }
 
 function inventoryFloatRoot() {
@@ -724,12 +731,20 @@ function rememberOpenBagAnchor(originEl, containerId, index) {
     pendingOpenBagAnchor = { origin: 'slot' };
 }
 
+function bringFloatToFront(el) {
+    if (!el || !el.style) return;
+    floatZ += 1;
+    el.style.zIndex = String(1000 + floatZ);
+}
+
 function wireFloatHeaderDrag(header, el) {
-    if (!header || !el) return;
+    if (!header || !el || header._hasFloatDrag) return;
+    header._hasFloatDrag = true;
     let pan = null;
     header.addEventListener('pointerdown', function (ev) {
         const t = ev.target;
         if (t && t.closest && t.closest('button')) return;
+        bringFloatToFront(el);
         pan = {
             x: ev.clientX,
             y: ev.clientY,
@@ -748,6 +763,19 @@ function wireFloatHeaderDrag(header, el) {
     header.addEventListener('pointerup', function () { pan = null; });
     header.addEventListener('pointercancel', function () { pan = null; });
 }
+
+function initFloatPanelDrag(id) {
+    const panel = typeof $ === 'function' ? $(id) : (typeof document !== 'undefined' ? document.getElementById(id) : null);
+    if (!panel) return;
+    const header = panel.querySelector('.panel-title-bar, .inv-panel-header, header');
+    if (header) {
+        wireFloatHeaderDrag(header, panel);
+    }
+    panel.addEventListener('pointerdown', function () {
+        bringFloatToFront(panel);
+    });
+}
+
 
 function placeNewFloat(el, opts) {
     if (!el || !el.style || !FloatPlace) return null;
@@ -845,8 +873,7 @@ function focusOpenBagWindow(uid) {
         if (other && other.panel) other.panel.classList.remove('is-focused');
     });
     rec.panel.classList.add('is-focused');
-    floatZ += 1;
-    rec.panel.style.zIndex = String(1000 + floatZ);
+    bringFloatToFront(rec.panel);
     openBags.delete(uid);
     openBags.set(uid, rec);
     openBag = rec.view;
@@ -874,6 +901,14 @@ function syncFloatRootAria() {
 function removeOpenBagWindow(uid) {
     const rec = openBags.get(uid);
     if (!rec) return;
+    if (rec.view) {
+        containerCache.set(uid, rec.view);
+        if (rec.openedFrom) {
+            containerSlotMap.set(rec.openedFrom.containerId + ':' + rec.openedFrom.index, uid);
+            rec.view.parentContainerId = rec.openedFrom.containerId;
+            rec.view.parentSlotIndex = rec.openedFrom.index;
+        }
+    }
     if (rec.panel && rec.panel.parentNode) rec.panel.remove();
     openBags.delete(uid);
     syncFocusedOpenBag();
@@ -890,6 +925,7 @@ function closeAllOpenBags() {
 
 function upsertOpenBagWindow(view, itemIdHint) {
     if (!view || !view.containerId) return null;
+    containerCache.set(view.containerId, view);
     const uid = view.containerId;
     let rec = openBags.get(uid);
     if (!rec) {
@@ -912,6 +948,44 @@ function upsertOpenBagWindow(view, itemIdHint) {
     return rec;
 }
 
+function queueBackgroundFetch(containerId, index, itemIdHint) {
+    if (!containerId) return;
+    const key = containerId + ':' + (index | 0);
+    if (containerSlotMap.has(key) && containerCache.has(containerSlotMap.get(key))) return;
+    for (let i = 0; i < bgFetchQueue.length; i++) {
+        if (bgFetchQueue[i].containerId === containerId && (bgFetchQueue[i].index | 0) === (index | 0)) {
+            return;
+        }
+    }
+    bgFetchQueue.push({ containerId: containerId, index: index | 0, itemIdHint: itemIdHint || '' });
+    drainBgFetchQueue();
+}
+
+function drainBgFetchQueue() {
+    if (pendingOpenFrom || !bgFetchQueue.length) return;
+    const next = bgFetchQueue.shift();
+    if (!next) return;
+    const key = next.containerId + ':' + (next.index | 0);
+    if (containerSlotMap.has(key) && containerCache.has(containerSlotMap.get(key))) {
+        drainBgFetchQueue();
+        return;
+    }
+    pendingOpenBagItemId = next.itemIdHint || '';
+    pendingOpenFrom = { containerId: next.containerId, index: next.index | 0, isBackground: true };
+    send(C2S.OPEN_BAG, encodeContainerSlot(next.containerId, next.index | 0));
+}
+
+function checkAndFetchSubContainers() {
+    if (typeof bag === 'undefined' || !bag || !Array.isArray(bag.slots)) return;
+    for (let i = 0; i < bag.slots.length; i++) {
+        const s = bag.slots[i];
+        if (!s) continue;
+        if ((s.flags & 1) || (typeof equipItemIsContainer === 'function' && equipItemIsContainer(s))) {
+            queueBackgroundFetch(bag.containerId, s.index, s.id);
+        }
+    }
+}
+
 function applyBagView(view) {
     if (!view || !view.containerId) {
         closeAllOpenBags();
@@ -923,11 +997,49 @@ function applyBagView(view) {
         renderBag();
         return;
     }
+
+    containerCache.set(view.containerId, view);
+
+    if (pendingOpenFrom && pendingOpenFrom.isBackground) {
+        const pCid = pendingOpenFrom.containerId;
+        const pIdx = pendingOpenFrom.index;
+        pendingOpenFrom = null;
+        pendingOpenBagItemId = '';
+
+        containerSlotMap.set(pCid + ':' + pIdx, view.containerId);
+        view.parentContainerId = pCid;
+        view.parentSlotIndex = pIdx;
+
+        send(C2S.CLOSE_BAG, encodeCloseBag(view.containerId));
+
+        if (Array.isArray(view.slots)) {
+            for (let i = 0; i < view.slots.length; i++) {
+                const s = view.slots[i];
+                if (s && ((s.flags & 1) || equipItemIsContainer(s))) {
+                    queueBackgroundFetch(view.containerId, s.index, s.id);
+                }
+            }
+        }
+
+        drainBgFetchQueue();
+
+        const shopPanel = $('npc-shop');
+        if (shopPanel && !shopPanel.hidden && currentShop) {
+            buildShopUi(shopPanel, $('shop-body'));
+        }
+        return;
+    }
+
     const isNew = !openBags.has(view.containerId);
     const hint = isNew ? pendingOpenBagItemId : '';
     if (isNew) pendingOpenBagItemId = '';
     const rec = upsertOpenBagWindow(view, hint);
     if (isNew && rec && pendingOpenFrom) rec.openedFrom = pendingOpenFrom;
+    if (rec && rec.openedFrom) {
+        containerSlotMap.set(rec.openedFrom.containerId + ':' + rec.openedFrom.index, view.containerId);
+        view.parentContainerId = rec.openedFrom.containerId;
+        view.parentSlotIndex = rec.openedFrom.index;
+    }
     openBag = view;
     if (rec && rec.itemId) openBagItemId = rec.itemId;
     renderBag();
@@ -1919,7 +2031,11 @@ function renderDialog(text, replies) {
         repList.appendChild(b);
     });
     body.appendChild(repList);
-    placeFloat(panel, talkNpc);
+    const wasHidden = panel.hidden;
+    panel.hidden = false;
+    if (wasHidden || !panel.style || !panel.style.left || !panel.style.top) {
+        placeFloat(panel, talkNpc);
+    }
 }
 
 function makeItemSprite(itemId) {
@@ -1963,27 +2079,163 @@ function ensureShopUiState(npcId) {
     }
 }
 
+function isGroundOpenBag(rec) {
+    if (!rec) return false;
+    const groundIndex = typeof OPEN_BAG_SELF_INDEX !== 'undefined' ? OPEN_BAG_SELF_INDEX : 255;
+    let cur = rec;
+    const seen = new Set();
+    while (cur && cur.openedFrom) {
+        if ((cur.openedFrom.index | 0) === groundIndex) return true;
+        const parentId = cur.openedFrom.containerId;
+        if (!parentId || seen.has(parentId)) break;
+        seen.add(parentId);
+        if (typeof bag !== 'undefined' && bag && parentId === bag.containerId) return false;
+        if (typeof equipment !== 'undefined' && equipment && equipment[parentId]) return false;
+        cur = typeof openBags !== 'undefined' && openBags && typeof openBags.get === 'function' ? openBags.get(parentId) : null;
+    }
+    return false;
+}
+
+function walkPlayerContainers(fn) {
+    if (typeof fn !== 'function') return;
+    const visitedUids = new Set();
+    const queue = [];
+
+    function enqueue(uid) {
+        if (!uid || visitedUids.has(uid)) return;
+        visitedUids.add(uid);
+        let view = null;
+        if (typeof containerCache !== 'undefined' && containerCache && typeof containerCache.get === 'function') {
+            view = containerCache.get(uid);
+        }
+        if (!view && typeof openBags !== 'undefined' && openBags && typeof openBags.get === 'function') {
+            const rec = openBags.get(uid);
+            view = (rec && rec.view) ? rec.view : rec;
+        }
+        if (view && Array.isArray(view.slots)) {
+            queue.push(view);
+        }
+    }
+
+    // 1. Containers inside main backpack
+    if (typeof bag !== 'undefined' && bag && Array.isArray(bag.slots)) {
+        for (let i = 0; i < bag.slots.length; i++) {
+            const s = bag.slots[i];
+            if (!s) continue;
+            if ((s.flags & 1) || (typeof equipItemIsContainer === 'function' && equipItemIsContainer(s))) {
+                const key = bag.containerId + ':' + s.index;
+                const childUid = typeof containerSlotMap !== 'undefined' && containerSlotMap ? containerSlotMap.get(key) : null;
+                if (childUid) enqueue(childUid);
+            }
+        }
+    }
+
+    // 2. Open bags (excluding ground bags)
+    if (typeof openBags !== 'undefined' && openBags && typeof openBags.values === 'function') {
+        for (const ob of openBags.values()) {
+            if (!ob) continue;
+            if (typeof isGroundOpenBag === 'function' && isGroundOpenBag(ob)) continue;
+            const view = (ob && ob.view) ? ob.view : ob;
+            if (view && view.containerId) enqueue(view.containerId);
+        }
+    }
+
+    // 3. Fallback: cached containers linked to known tree
+    if (typeof containerCache !== 'undefined' && containerCache && typeof containerCache.values === 'function') {
+        for (const view of containerCache.values()) {
+            if (view && view.parentContainerId && ((typeof bag !== 'undefined' && bag && view.parentContainerId === bag.containerId) || visitedUids.has(view.parentContainerId))) {
+                enqueue(view.containerId);
+            }
+        }
+    }
+
+    // 4. BFS traversal for deeper nesting
+    while (queue.length > 0) {
+        const view = queue.shift();
+        if (!view) continue;
+        fn(view);
+
+        if (Array.isArray(view.slots)) {
+            for (let i = 0; i < view.slots.length; i++) {
+                const s = view.slots[i];
+                if (!s) continue;
+                if ((s.flags & 1) || (typeof equipItemIsContainer === 'function' && equipItemIsContainer(s))) {
+                    const key = view.containerId + ':' + s.index;
+                    const childUid = typeof containerSlotMap !== 'undefined' && containerSlotMap ? containerSlotMap.get(key) : null;
+                    if (childUid) enqueue(childUid);
+                }
+            }
+        }
+    }
+}
+
 function countPlayerItem(itemId) {
     const id = String(itemId || '');
     if (!id) return 0;
     let n = 0;
-    if (bag && Array.isArray(bag.slots)) {
+    if (typeof bag !== 'undefined' && bag && Array.isArray(bag.slots)) {
         for (let i = 0; i < bag.slots.length; i++) {
             const s = bag.slots[i];
             if (s && s.id === id) n += (s.count | 0) > 0 ? (s.count | 0) : 1;
         }
     }
-    if (typeof openBags !== 'undefined' && openBags && typeof openBags.values === 'function') {
-        for (const ob of openBags.values()) {
-            if (!ob || !Array.isArray(ob.slots)) continue;
-            if (bag && ob.containerId && ob.containerId === bag.containerId) continue;
-            for (let i = 0; i < ob.slots.length; i++) {
-                const s = ob.slots[i];
-                if (s && s.id === id) n += (s.count | 0) > 0 ? (s.count | 0) : 1;
+    walkPlayerContainers(function (view) {
+        if (!view || !Array.isArray(view.slots)) return;
+        const cid = view.containerId;
+        if (typeof bag !== 'undefined' && bag && cid && cid === bag.containerId) return;
+        for (let i = 0; i < view.slots.length; i++) {
+            const s = view.slots[i];
+            if (s && s.id === id) n += (s.count | 0) > 0 ? (s.count | 0) : 1;
+        }
+    });
+    return n;
+}
+
+function predictConsumeFromInventory(itemId, count) {
+    const id = String(itemId || '');
+    let need = Math.max(0, Math.floor(Number(count) || 0));
+    if (!id || need <= 0) return;
+
+    if (typeof bag !== 'undefined' && bag && Array.isArray(bag.slots)) {
+        for (let i = 0; i < bag.slots.length && need > 0; i++) {
+            const s = bag.slots[i];
+            if (s && s.id === id) {
+                const have = (s.count | 0) > 0 ? (s.count | 0) : 1;
+                const take = Math.min(have, need);
+                s.count = have - take;
+                need -= take;
+                if (s.count <= 0) {
+                    bag.slots.splice(i, 1);
+                    i--;
+                }
             }
         }
     }
-    return n;
+
+    if (need > 0) {
+        walkPlayerContainers(function (view) {
+            if (need <= 0 || !view || !Array.isArray(view.slots)) return;
+            const cid = view.containerId;
+            if (typeof bag !== 'undefined' && bag && cid && cid === bag.containerId) return;
+            for (let i = 0; i < view.slots.length && need > 0; i++) {
+                const s = view.slots[i];
+                if (s && s.id === id) {
+                    const have = (s.count | 0) > 0 ? (s.count | 0) : 1;
+                    const take = Math.min(have, need);
+                    s.count = have - take;
+                    need -= take;
+                    if (s.count <= 0) {
+                        view.slots.splice(i, 1);
+                        i--;
+                    }
+                }
+            }
+        });
+    }
+
+    if (typeof renderBag === 'function') {
+        renderBag();
+    }
 }
 
 function makeShopRow(row, side) {
@@ -2141,6 +2393,9 @@ function buildShopUi(panel, body) {
             ui.search = '';
             ui.selectedItemId = null;
             ui.amount = 1;
+            if (side === 'sell' && typeof checkAndFetchSubContainers === 'function') {
+                checkAndFetchSubContainers();
+            }
             buildShopUi(panel, body);
         });
         return tab;
@@ -2170,12 +2425,26 @@ function buildShopUi(panel, body) {
     back.className = 'inv-npc-shop-back';
     back.textContent = 'Back';
     back.addEventListener('click', () => {
+        const shopP = $('npc-shop');
+        let inheritedPos = null;
+        if (shopP && !shopP.hidden && shopP.style && shopP.style.left && shopP.style.top) {
+            inheritedPos = { left: shopP.style.left, top: shopP.style.top };
+        }
         hideFloat('npc-shop');
         shopNpc = 0;
         shopUiState = null;
         currentShop = null;
         if (talkNpc) {
-            placeFloat($('npc-dialog'), talkNpc);
+            const diag = $('npc-dialog');
+            if (diag) {
+                if (inheritedPos && diag.style) {
+                    diag.hidden = false;
+                    diag.style.left = inheritedPos.left;
+                    diag.style.top = inheritedPos.top;
+                } else {
+                    placeFloat(diag, talkNpc);
+                }
+            }
         }
     });
     shopEl.appendChild(back);
@@ -2375,6 +2644,9 @@ function buildShopUi(panel, body) {
         const row = selectedRow();
         if (!row) return;
         const opcode = ui.side === 'sell' ? C2S.SHOP_SELL : C2S.SHOP_BUY;
+        if (ui.side === 'sell' && typeof predictConsumeFromInventory === 'function') {
+            predictConsumeFromInventory(row.itemId, ui.amount);
+        }
         send(opcode, encodeStrPayload(shopNpc, ui.amount, row.itemId));
     });
 
@@ -2399,11 +2671,29 @@ function renderShop(currency, items) {
 
     currentShop = { currency: currency || 'gold_coin', items: Array.isArray(items) ? items : [] };
     ensureShopUiState(shopNpc);
+    if (typeof checkAndFetchSubContainers === 'function') {
+        checkAndFetchSubContainers();
+    }
 
     buildShopUi(panel, body);
 
+    const diag = typeof $ === 'function' ? $('npc-dialog') : null;
+    let inheritedPos = null;
+    if (diag && !diag.hidden && diag.style && diag.style.left && diag.style.top) {
+        inheritedPos = { left: diag.style.left, top: diag.style.top };
+    }
+    if (typeof hideFloat === 'function') {
+        hideFloat('npc-dialog');
+    }
+
     if (panel.hidden) {
-        placeFloat(panel, shopNpc);
+        if (inheritedPos && panel.style) {
+            panel.hidden = false;
+            panel.style.left = inheritedPos.left;
+            panel.style.top = inheritedPos.top;
+        } else {
+            placeFloat(panel, shopNpc);
+        }
     }
 }
 
@@ -2444,9 +2734,13 @@ function renderLoot(items) {
     if (c) {
         const title = $('loot-title');
         if (title) title.textContent = c.name || 'Loot';
-        placeFloatAtTile(panel, c.x, c.y);
-    } else {
-        placeFloat(panel, 0);
+    }
+    if (panel.hidden || !panel.style || !panel.style.left || !panel.style.top) {
+        if (c) {
+            placeFloatAtTile(panel, c.x, c.y);
+        } else {
+            placeFloat(panel, 0);
+        }
     }
 }
 
@@ -4101,6 +4395,9 @@ function onFrame(bytes, tokenHex) {
         bag = readBagView(r);
         selectedBag = -1;
         renderBag();
+        if (typeof checkAndFetchSubContainers === 'function') {
+            checkAndFetchSubContainers();
+        }
         const shopPanel = $('npc-shop');
         if (shopPanel && !shopPanel.hidden && currentShop) {
             buildShopUi(shopPanel, $('shop-body'));
@@ -4895,6 +5192,9 @@ document.addEventListener('DOMContentLoaded', function () {
         openCorpse = 0;
         hideFloat('loot-panel');
     });
+    initFloatPanelDrag('npc-dialog');
+    initFloatPanelDrag('npc-shop');
+    initFloatPanelDrag('loot-panel');
     initSidebarPanels();
     renderEquipment();
     loadItemCatalog();
@@ -4949,3 +5249,10 @@ document.addEventListener('DOMContentLoaded', function () {
         log(String(e && e.message || e), 'err');
     });
 });
+
+if (typeof window !== 'undefined') {
+    window.wireFloatHeaderDrag = wireFloatHeaderDrag;
+    window.initFloatPanelDrag = initFloatPanelDrag;
+    window.bringFloatToFront = bringFloatToFront;
+}
+

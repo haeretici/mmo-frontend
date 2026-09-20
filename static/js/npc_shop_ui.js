@@ -132,14 +132,30 @@
         if (counter && typeof counter.countPlayerItem === 'function') return counter.countPlayerItem(itemId) | 0;
         if (counter && typeof counter === 'object') {
             if (counter.inventory) return resolveItemCount(counter.inventory, itemId);
+            let total = 0;
             if (Array.isArray(counter.slots)) {
-                let total = 0;
                 for (let i = 0; i < counter.slots.length; i++) {
                     const s = counter.slots[i];
                     if (s && s.id === itemId) total += (s.count | 0) > 0 ? (s.count | 0) : 1;
                 }
-                return total;
             }
+            if (counter.openBags) {
+                const bags = typeof counter.openBags.values === 'function'
+                    ? Array.from(counter.openBags.values())
+                    : (Array.isArray(counter.openBags) ? counter.openBags : Object.values(counter.openBags));
+                for (let i = 0; i < bags.length; i++) {
+                    const ob = bags[i];
+                    const view = (ob && ob.view) ? ob.view : ob;
+                    const slots = view && Array.isArray(view.slots) ? view.slots : (Array.isArray(ob && ob.slots) ? ob.slots : null);
+                    if (slots) {
+                        for (let j = 0; j < slots.length; j++) {
+                            const s = slots[j];
+                            if (s && s.id === itemId) total += (s.count | 0) > 0 ? (s.count | 0) : 1;
+                        }
+                    }
+                }
+            }
+            return total;
         }
         return 0;
     }

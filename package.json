@@ -7,7 +7,7 @@
     "scripts": {
         "start": "php bin/serve.php",
         "build": "node build-styles.mjs",
-        "test": "php tests/load_settings.php && php tests/client_config.php && php tests/visual.php && php tests/spells_ui.php && node tests/protocol.js && node tests/mouse_dispatcher.js && node tests/inventory_mouse.js && node tests/path_walk.js && node tests/area_centers.js && node tests/keyboard_walk.js && node tests/tile_draw.js && node tests/sprites.js && node tests/visual_map.js && node tests/entity_hud.js && node tests/ground_renderer.js && node tests/sprite_presentation.js && node tests/combat_fx.js && node tests/action_bar_assign.js && node tests/action_bars.js && node tests/float_panel_place.js && node tests/npc_shop_ui.js && node tests/shop_integration.js && node tests/static_pages.js && node tests/site_http.js && node tests/phase5_verification.js"
+        "test": "php tests/load_settings.php && php tests/client_config.php && php tests/visual.php && php tests/spells_ui.php && node tests/protocol.js && node tests/mouse_dispatcher.js && node tests/inventory_mouse.js && node tests/path_walk.js && node tests/area_centers.js && node tests/keyboard_walk.js && node tests/tile_draw.js && node tests/sprites.js && node tests/visual_map.js && node tests/entity_hud.js && node tests/ground_renderer.js && node tests/sprite_presentation.js && node tests/combat_fx.js && node tests/action_bar_assign.js && node tests/action_bars.js && node tests/float_panel_place.js && node tests/float_panel_drag.js && node tests/npc_shop_ui.js && node tests/shop_integration.js && node tests/static_pages.js && node tests/site_http.js && node tests/phase5_verification.js"
     },
     "devDependencies": {
         "sass": "^1.101.6"
