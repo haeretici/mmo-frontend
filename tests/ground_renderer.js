@@ -33,7 +33,7 @@ function createMockContext() {
 
 function main() {
     // 1. Constants
-    assert.strictEqual(Ground.MAX_GROUND_RENDER, 4);
+    assert.strictEqual(Ground.MAX_GROUND_RENDER, 10);
     assert.strictEqual(Ground.DEFAULT_TILE_SIZE, 32);
     assert.strictEqual(Ground.FIELD_KINDS.FIRE, 'fire');
     assert.strictEqual(Ground.FIELD_KINDS.POISON, 'poison');
@@ -148,20 +148,20 @@ function main() {
         { id: 'sword', count: 1 },
         { id: 'shield', count: 1 },
         { id: 'apple', count: 5 },
-        { id: 'stone', count: 1 } // Exceeds MAX_GROUND_RENDER (4)
+        { id: 'stone', count: 2 }
     ];
     Ground.drawGroundItemStack(ctxStack, items, 0, 0, 32, 32, {});
     const stackFills = ctxStack.calls.filter((c) => c.op === 'fillRect');
-    assert.strictEqual(stackFills.length, 4); // Capped at MAX_GROUND_RENDER
+    assert.strictEqual(stackFills.length, 5);
+    assert.ok(stackFills.length <= Ground.MAX_GROUND_RENDER);
     // Staggered offsets: step = 32 / 10 = 3
     assert.strictEqual(stackFills[0].x, 8); // 0 + pad
     assert.strictEqual(stackFills[1].x, 11); // 3 + pad
     assert.strictEqual(stackFills[2].x, 14); // 6 + pad
     assert.strictEqual(stackFills[3].x, 17); // 9 + pad
-    // Count text drawn for top item if count > 1
     const textCalls = ctxStack.calls.filter((c) => c.op === 'fillText');
     assert.strictEqual(textCalls.length, 1);
-    assert.strictEqual(textCalls[0].text, '5'); // 4th item count is 5
+    assert.strictEqual(textCalls[0].text, '2');
 
     // 10. Master render
     const ctxMaster = createMockContext();

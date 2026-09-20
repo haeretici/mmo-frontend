@@ -5,6 +5,7 @@ const TS = 32;
 const CREATURE_MIN = 1000000000;
 const ENGAGE_RANGE = 7;
 const BACKPACK_SLOTS = 20;
+const MAX_OPEN_BAGS = 8;
 const SKILL_ROWS = [
     { key: 'axe', label: 'Axe' },
     { key: 'club', label: 'Club' },
@@ -34,14 +35,16 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeMoveItem, encodeMovePath, encodeCast, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, Reader } = EngineProtocol;
 const Mouse = EngineMouse;
+const InvMouse = typeof EngineInventoryMouse !== 'undefined' ? EngineInventoryMouse : null;
 const Path = EnginePath;
 const Draw = EngineTileDraw;
 const Sprites = EngineSprites;
 const Visual = EngineVisual;
 const KeyWalk = EngineKeyboardWalk;
 const Hud = EngineEntityHud;
+const FloatPlace = typeof EngineFloatPanelPlace !== 'undefined' ? EngineFloatPanelPlace : null;
 const Ground = typeof EngineGroundRenderer !== 'undefined' ? EngineGroundRenderer : null;
 const SpritePres = typeof EngineSpritePresentation !== 'undefined' ? EngineSpritePresentation : null;
 const CombatFx = typeof EngineCombatFx !== 'undefined' ? EngineCombatFx : null;
@@ -55,12 +58,20 @@ let others = new Map();
 let corpses = new Map();
 let worldPins = new Map();
 let groundItems = new Map();
+let groundByUid = new Map();
+let groundDrag = null;
 let fields = new Map();
 let pendingUseWith = null;
 let seenAt = new Map();
 let openCorpse = 0;
 let bag = { containerId: '', capacity: BACKPACK_SLOTS, slots: [] };
 let openBag = null;
+let openBagItemId = '';
+let pendingOpenBagItemId = '';
+let pendingOpenBagAnchor = null;
+let pendingOpenFrom = null;
+let floatZ = 0;
+const openBags = new Map();
 let equipment = {};
 let capVal = null;
 let capMax = null;
@@ -85,6 +96,8 @@ let chaseWalk = false;
 const keyWalk = KeyWalk.create();
 let buttonsDown = { left: false, right: false };
 let cancelNext = false;
+let suppressNextSlotClick = false;
+let suppressNextContextMenu = false;
 let fctTimer = 0;
 let lastTick = 0;
 let ups = 20;
@@ -402,17 +415,43 @@ function renderCombat() {
         d.appendChild(iconBox);
         d.appendChild(info);
 
+        d.addEventListener('pointerdown', function (ev) {
+            if (ev.button === 0) buttonsDown.left = true;
+            if (ev.button === 2) buttonsDown.right = true;
+            if (ev.button !== 0) return;
+            const intents = combatIntentsFromEvent(ev, 'left');
+            if (intents && intents[0] && intents[0].type === 'LOOK') {
+                ev.preventDefault();
+                suppressNextSlotClick = true;
+                suppressNextContextMenu = true;
+                applyCombatIntents(intents, row, ev.clientX, ev.clientY);
+            }
+        });
         d.addEventListener('click', function (ev) {
             ev.preventDefault();
-            selectTarget(row.id);
+            if (suppressNextSlotClick) {
+                suppressNextSlotClick = false;
+                return;
+            }
+            const intents = combatIntentsFromEvent(ev, 'left');
+            if (!intents) {
+                selectTarget(row.id);
+                return;
+            }
+            applyCombatIntents(intents, row, ev.clientX, ev.clientY);
         });
         d.addEventListener('contextmenu', function (ev) {
             ev.preventDefault();
-            autoChase = true;
-            saveAutoChase(true);
-            const box = $('auto-chase');
-            if (box) box.checked = true;
-            selectTarget(row.id);
+            if (suppressNextContextMenu) {
+                suppressNextContextMenu = false;
+                return;
+            }
+            const intents = combatIntentsFromEvent(ev, 'right');
+            if (!intents) {
+                showCombatMenu(ev.clientX, ev.clientY, row);
+                return;
+            }
+            applyCombatIntents(intents, row, ev.clientX, ev.clientY);
         });
         d.addEventListener('mouseenter', function () {
             hoveredEntityId = row.id;
@@ -479,7 +518,425 @@ function renderSkills() {
 }
 
 function itemLabel(id) {
-    return String(id || '').replace(/_/g, ' ');
+    if (!id) return '';
+    const meta = itemCatalog.get(id);
+    if (meta && (meta.label || meta.name)) return String(meta.label || meta.name);
+    return String(id).replace(/_/g, ' ');
+}
+
+function groundTileKey(x, y, z) {
+    return (z | 0) + ',' + (x | 0) + ',' + (y | 0);
+}
+
+function rebuildGroundTile(x, y, z) {
+    const key = groundTileKey(x, y, z);
+    const items = [];
+    groundByUid.forEach(function (ent) {
+        if (!ent) return;
+        if ((ent.x | 0) === (x | 0) && (ent.y | 0) === (y | 0) && (ent.z | 0) === (z | 0)) {
+            items.push(ent);
+        }
+    });
+    items.sort(function (a, b) { return (b.stackIndex | 0) - (a.stackIndex | 0); });
+    if (!items.length) {
+        groundItems.delete(key);
+        return;
+    }
+    groundItems.set(key, { x: x | 0, y: y | 0, z: z | 0, items: items });
+}
+
+function upsertGroundSlot(slot) {
+    if (!slot || !slot.uid) return;
+    const prev = groundByUid.get(slot.uid);
+    groundByUid.set(slot.uid, {
+        uid: slot.uid,
+        x: slot.x | 0,
+        y: slot.y | 0,
+        z: slot.z | 0,
+        stackIndex: slot.stackIndex | 0,
+        id: slot.id,
+        itemId: slot.id,
+        count: slot.count | 0,
+        flags: slot.flags | 0
+    });
+    if (prev && ((prev.x | 0) !== (slot.x | 0) || (prev.y | 0) !== (slot.y | 0) || (prev.z | 0) !== (slot.z | 0))) {
+        rebuildGroundTile(prev.x, prev.y, prev.z);
+    }
+    rebuildGroundTile(slot.x, slot.y, slot.z);
+    if (groundDrag && groundDrag.uid === slot.uid) {
+        groundDrag.x = slot.x | 0;
+        groundDrag.y = slot.y | 0;
+        groundDrag.z = slot.z | 0;
+        groundDrag.stackIndex = slot.stackIndex | 0;
+    }
+}
+
+function removeGroundUid(uid) {
+    if (!uid) return;
+    const prev = groundByUid.get(uid);
+    groundByUid.delete(uid);
+    if (groundDrag && groundDrag.uid === uid) groundDrag = null;
+    if (prev) rebuildGroundTile(prev.x, prev.y, prev.z);
+}
+
+function backpackMoveDest() {
+    return { kind: 'container', containerUid: bag.containerId || 'root', index: 0 };
+}
+
+function tileMoveLoc(x, y, z, stackIndex) {
+    return { kind: 'tile', x: x | 0, y: y | 0, z: z | 0, stackIndex: stackIndex | 0 };
+}
+
+function sendPickup(tile, stackIndex, item, ev) {
+    if (!tile) return;
+    moveItemWithSplit(
+        tileMoveLoc(tile.x, tile.y, tile.z, stackIndex),
+        backpackMoveDest(),
+        item || { id: '', count: 1 },
+        ev
+    );
+}
+
+function catalogItemIsContainer(id) {
+    if (!id) return false;
+    const meta = itemCatalog.get(id);
+    if (!meta) {
+        const s = String(id).toLowerCase();
+        return s === 'bag' || s === 'backpack' || s.indexOf('quiver') >= 0 || s.indexOf('backpack') >= 0;
+    }
+    const cat = String(meta.category || '').toLowerCase();
+    if (cat === 'container' || cat === 'backpack' || cat === 'bag' || cat === 'quiver') return true;
+    const types = Array.isArray(meta.type) ? meta.type : [];
+    for (let i = 0; i < types.length; i++) {
+        const t = String(types[i]).toLowerCase();
+        if (t === 'container' || t === 'backpack' || t === 'bag' || t === 'quiver') return true;
+    }
+    return false;
+}
+
+function equipItemIsContainer(item) {
+    if (!item) return false;
+    if (item.flags & 1) return true;
+    return catalogItemIsContainer(item.id);
+}
+
+function requestOpenBag(containerId, index, itemId, originEl) {
+    if (!containerId) return;
+    pendingOpenBagItemId = itemId || '';
+    if (itemId) openBagItemId = itemId;
+    pendingOpenFrom = { containerId: containerId, index: index | 0 };
+    rememberOpenBagAnchor(originEl, containerId, index);
+    const existingUid = findExistingOpenBagUid(containerId, index | 0);
+    if (existingUid) focusOpenBagWindow(existingUid);
+    send(C2S.OPEN_BAG, encodeContainerSlot(containerId, index));
+}
+
+function findExistingOpenBagUid(containerId, index) {
+    if (containerId && openBags.has(containerId)) return containerId;
+    const idx = index | 0;
+    let found = '';
+    openBags.forEach(function (rec, uid) {
+        if (found || !rec) return;
+        if (rec.openedFrom && rec.openedFrom.containerId === containerId && (rec.openedFrom.index | 0) === idx) {
+            found = uid;
+        }
+    });
+    return found || '';
+}
+
+function requestCloseBag(containerId) {
+    send(C2S.CLOSE_BAG, encodeCloseBag(containerId || ''));
+    if (!containerId) closeAllOpenBags();
+    else removeOpenBagWindow(containerId);
+    renderBag();
+}
+
+function inventoryFloatRoot() {
+    let root = $('inventoryFloatRoot');
+    if (root) return root;
+    if (typeof document === 'undefined' || !document.body) return null;
+    root = document.createElement('div');
+    root.id = 'inventoryFloatRoot';
+    root.className = 'inv-float-root';
+    document.body.appendChild(root);
+    return root;
+}
+
+function floatRootHost() {
+    return document.fullscreenElement
+        || document.webkitFullscreenElement
+        || document.mozFullScreenElement
+        || document.body;
+}
+
+function reparentFloatRoot() {
+    const root = inventoryFloatRoot();
+    const host = floatRootHost();
+    if (!root || !host) return;
+    if (root.parentNode !== host) host.appendChild(root);
+}
+
+function bagPanelParts(panel) {
+    if (!panel) return { title: null, count: null, grid: null, close: null };
+    return {
+        title: panel.querySelector('.inv-panel-title'),
+        count: panel.querySelector('.inv-panel-count'),
+        grid: panel.querySelector('.inv-panel-grid') || panel.querySelector('.backpack-grid'),
+        close: panel.querySelector('.inv-panel-close')
+    };
+}
+
+function findInvSlotEl(containerId, index) {
+    if (containerId == null || typeof document === 'undefined') return null;
+    const id = String(containerId);
+    const idx = index != null ? String(index) : '';
+    const nodes = document.querySelectorAll('.inv-slot[data-container-uid], .slot-item[data-slot]');
+    for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (n.getAttribute('data-container-uid') === id && n.getAttribute('data-slot-index') === idx) {
+            return n;
+        }
+        if (n.getAttribute('data-slot') === id) return n;
+    }
+    return null;
+}
+
+function rememberOpenBagAnchor(originEl, containerId, index) {
+    let el = originEl;
+    if (!el) el = findInvSlotEl(containerId, index);
+    if (el && typeof el.getBoundingClientRect === 'function') {
+        pendingOpenBagAnchor = { origin: 'slot', slotEl: el };
+        return;
+    }
+    pendingOpenBagAnchor = { origin: 'slot' };
+}
+
+function wireFloatHeaderDrag(header, el) {
+    if (!header || !el) return;
+    let pan = null;
+    header.addEventListener('pointerdown', function (ev) {
+        const t = ev.target;
+        if (t && t.closest && t.closest('button')) return;
+        pan = {
+            x: ev.clientX,
+            y: ev.clientY,
+            sl: el.offsetLeft,
+            st: el.offsetTop
+        };
+        if (header.setPointerCapture && ev.pointerId != null) {
+            try { header.setPointerCapture(ev.pointerId); } catch (e) {}
+        }
+    });
+    header.addEventListener('pointermove', function (ev) {
+        if (!pan) return;
+        el.style.left = pan.sl + (ev.clientX - pan.x) + 'px';
+        el.style.top = pan.st + (ev.clientY - pan.y) + 'px';
+    });
+    header.addEventListener('pointerup', function () { pan = null; });
+    header.addEventListener('pointercancel', function () { pan = null; });
+}
+
+function placeNewFloat(el, opts) {
+    if (!el || !el.style || !FloatPlace) return null;
+    const o2 = opts || {};
+    let origin = o2.origin;
+    let anchor = o2.anchor || null;
+    if (!anchor && o2.slotEl) {
+        anchor = FloatPlace.slotClientRect(o2.slotEl);
+        if (!origin) origin = 'slot';
+    }
+    if (!anchor && o2.tile && o2.tile.x != null && o2.tile.y != null) {
+        const canvasEl = $('world');
+        anchor = FloatPlace.tileClientRect(
+            o2.tile,
+            canvasEl,
+            { _viewOriginX: camX, _viewOriginY: camY },
+            TS,
+            TS
+        );
+        if (!origin) origin = 'canvas';
+    }
+    const boundsEl = origin === 'canvas'
+        ? ($('gameCanvasContainer') || $('world'))
+        : null;
+    const pos = FloatPlace.placeFloatPanel(el, {
+        anchor: anchor,
+        bounds: FloatPlace.boundsForOrigin(
+            origin,
+            boundsEl,
+            typeof window !== 'undefined' ? window : null
+        ),
+        occupied: FloatPlace.collectOccupiedRects(inventoryFloatRoot(), el),
+        fallbackW: 200,
+        fallbackH: 80
+    });
+    const root = inventoryFloatRoot();
+    if (pos && root && typeof root.getBoundingClientRect === 'function') {
+        const rr = root.getBoundingClientRect();
+        el.style.left = (pos.left - (Number(rr.left) || 0)) + 'px';
+        el.style.top = (pos.top - (Number(rr.top) || 0)) + 'px';
+    }
+    return pos;
+}
+
+function createFloatBagPanel(uid) {
+    const root = inventoryFloatRoot();
+    if (!root || !uid) return null;
+    const el = document.createElement('div');
+    el.className = 'inv-float-panel';
+    el.dataset.containerUid = uid;
+    el.setAttribute('data-open-bag-uid', uid);
+
+    const header = document.createElement('div');
+    header.className = 'inv-panel-header';
+    const title = document.createElement('span');
+    title.className = 'inv-panel-title';
+    title.textContent = 'Bag';
+    const count = document.createElement('span');
+    count.className = 'inv-panel-count';
+    count.textContent = '(0/20)';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'inv-panel-close';
+    closeBtn.setAttribute('aria-label', 'Close bag');
+    closeBtn.innerHTML = '&times;';
+    closeBtn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        requestCloseBag(uid);
+    });
+    header.appendChild(title);
+    header.appendChild(count);
+    header.appendChild(closeBtn);
+
+    const scroll = document.createElement('div');
+    scroll.className = 'backpack-grid-scroll inv-panel-scroll';
+    const grid = document.createElement('div');
+    grid.className = 'backpack-grid inv-panel-grid';
+    scroll.appendChild(grid);
+    el.appendChild(header);
+    el.appendChild(scroll);
+    root.appendChild(el);
+
+    wireFloatHeaderDrag(header, el);
+    el.addEventListener('pointerdown', function () {
+        focusOpenBagWindow(uid);
+    });
+    return el;
+}
+
+function focusOpenBagWindow(uid) {
+    const rec = openBags.get(uid);
+    if (!rec || !rec.panel) return;
+    openBags.forEach(function (other) {
+        if (other && other.panel) other.panel.classList.remove('is-focused');
+    });
+    rec.panel.classList.add('is-focused');
+    floatZ += 1;
+    rec.panel.style.zIndex = String(1000 + floatZ);
+    openBags.delete(uid);
+    openBags.set(uid, rec);
+    openBag = rec.view;
+    openBagItemId = rec.itemId || '';
+}
+
+function syncFocusedOpenBag() {
+    const remain = Array.from(openBags.values());
+    if (!remain.length) {
+        openBag = null;
+        openBagItemId = '';
+        return;
+    }
+    const last = remain[remain.length - 1];
+    openBag = last.view;
+    openBagItemId = last.itemId || '';
+}
+
+function syncFloatRootAria() {
+    const root = $('inventoryFloatRoot');
+    if (!root) return;
+    root.setAttribute('aria-hidden', openBags.size ? 'false' : 'true');
+}
+
+function removeOpenBagWindow(uid) {
+    const rec = openBags.get(uid);
+    if (!rec) return;
+    if (rec.panel && rec.panel.parentNode) rec.panel.remove();
+    openBags.delete(uid);
+    syncFocusedOpenBag();
+    syncFloatRootAria();
+}
+
+function closeAllOpenBags() {
+    const uids = Array.from(openBags.keys());
+    for (let i = 0; i < uids.length; i++) removeOpenBagWindow(uids[i]);
+    pendingOpenBagItemId = '';
+    pendingOpenBagAnchor = null;
+    pendingOpenFrom = null;
+}
+
+function upsertOpenBagWindow(view, itemIdHint) {
+    if (!view || !view.containerId) return null;
+    const uid = view.containerId;
+    let rec = openBags.get(uid);
+    if (!rec) {
+        if (openBags.size >= MAX_OPEN_BAGS) {
+            const oldest = openBags.keys().next().value;
+            if (oldest) removeOpenBagWindow(oldest);
+        }
+        rec = {
+            view: view,
+            itemId: itemIdHint || '',
+            selected: -1,
+            panel: createFloatBagPanel(uid),
+            placed: false
+        };
+        openBags.set(uid, rec);
+    } else {
+        rec.view = view;
+        if (itemIdHint) rec.itemId = itemIdHint;
+    }
+    return rec;
+}
+
+function applyBagView(view) {
+    if (!view || !view.containerId) {
+        closeAllOpenBags();
+        renderBag();
+        return;
+    }
+    if ((view.capacity | 0) === 0) {
+        removeOpenBagWindow(view.containerId);
+        renderBag();
+        return;
+    }
+    const isNew = !openBags.has(view.containerId);
+    const hint = isNew ? pendingOpenBagItemId : '';
+    if (isNew) pendingOpenBagItemId = '';
+    const rec = upsertOpenBagWindow(view, hint);
+    if (isNew && rec && pendingOpenFrom) rec.openedFrom = pendingOpenFrom;
+    openBag = view;
+    if (rec && rec.itemId) openBagItemId = rec.itemId;
+    renderBag();
+    const from = rec && rec.openedFrom;
+    const matchesPending = pendingOpenFrom && (
+        pendingOpenFrom.containerId === view.containerId
+        || (from && from.containerId === pendingOpenFrom.containerId && (from.index | 0) === (pendingOpenFrom.index | 0))
+    );
+    if (isNew || matchesPending) {
+        focusOpenBagWindow(view.containerId);
+        pendingOpenFrom = null;
+    }
+}
+
+function openEquippedContainer(slotKey, item) {
+    if (!item || !slotKey) return;
+    if (slotKey === 'backpack') {
+        openSidebarPanel('backpack');
+        return;
+    }
+    const slotEl = document.querySelector('#activeEquipmentCard .slot-item[data-slot="' + slotKey + '"]');
+    requestOpenBag(slotKey, 0, item.id || '', slotEl);
 }
 
 function slotAt(view, index) {
@@ -761,7 +1218,7 @@ function moveItemWithSplit(from, to, item, ev) {
         count: count,
         shift: !!(ev && ev.shiftKey),
         ctrl: !!(ev && (ev.ctrlKey || ev.metaKey)),
-        moveStack: false
+        moveStack: !!(mouse && mouse.moveStack)
     });
     function go(n) {
         const sendCount = (n >= count) ? 0 : n;
@@ -783,7 +1240,18 @@ function onContainerDrop(ev, targetContainerId, targetIndex) {
     ev.preventDefault();
     ev.currentTarget.classList.remove('drag-over');
     if (!currentDrag) return;
-    if (currentDrag.kind === 'equipment') {
+    if (currentDrag.kind === 'ground') {
+        if (!groundByUid.has(currentDrag.uid)) {
+            onDragEnd();
+            return;
+        }
+        moveItemWithSplit(
+            tileMoveLoc(currentDrag.x, currentDrag.y, currentDrag.z, currentDrag.stackIndex),
+            { kind: 'container', containerUid: targetContainerId, index: targetIndex },
+            currentDrag.item,
+            ev
+        );
+    } else if (currentDrag.kind === 'equipment') {
         send(C2S.UNEQUIP, encodeUnequip(currentDrag.slot));
     } else if (currentDrag.kind === 'container') {
         if (currentDrag.containerId === targetContainerId && currentDrag.slotIndex === targetIndex) {
@@ -814,11 +1282,11 @@ function showEquipMenu(clientX, clientY, item, slotKey) {
             }
         }
     ];
-    if (slotKey === 'backpack') {
+    if (equipItemIsContainer(item)) {
         rows.push({
             label: 'Open',
             fn: function () {
-                openSidebarPanel('backpack');
+                openEquippedContainer(slotKey, item);
             }
         });
     }
@@ -833,10 +1301,239 @@ function showEquipMenu(clientX, clientY, item, slotKey) {
     placeCtxMenu(el, clientX, clientY);
 }
 
+function currentMouseMode() {
+    return mouse && mouse.mouseControlMode != null ? Number(mouse.mouseControlMode) : 1;
+}
+
+function playItemMeta(item) {
+    if (!item) return null;
+    const meta = item.id ? itemCatalog.get(item.id) : null;
+    if (!meta) return item;
+    return Object.assign({}, meta, item);
+}
+
+function containerSlotState(it, containerId, index) {
+    const extra = {
+        kind: 'container',
+        alreadyOpen: false,
+        openUid: '',
+        isMainBackpackSlot: false
+    };
+    if (it && InvMouse) {
+        const classified = InvMouse.classifyItem(playItemMeta(it));
+        if (classified.isContainer) {
+            const existing = findExistingOpenBagUid(containerId, index | 0);
+            extra.alreadyOpen = !!existing;
+            extra.openUid = existing || '';
+        }
+        return InvMouse.slotFromItem(playItemMeta(it), extra);
+    }
+    return Object.assign({ empty: !it }, extra);
+}
+
+function equipSlotState(it, slotKey) {
+    const extra = {
+        kind: 'equipment',
+        alreadyOpen: false,
+        openUid: '',
+        isMainBackpackSlot: slotKey === 'backpack',
+        slot: slotKey
+    };
+    if (it && InvMouse) {
+        const classified = InvMouse.classifyItem(playItemMeta(it));
+        if (classified.isContainer || extra.isMainBackpackSlot) {
+            const existing = findExistingOpenBagUid(slotKey, 0);
+            extra.alreadyOpen = !!existing;
+            extra.openUid = existing || '';
+        }
+        return InvMouse.slotFromItem(playItemMeta(it), extra);
+    }
+    return Object.assign({ empty: !it }, extra);
+}
+
+function inventoryIntentsFromEvent(ev, button, slotState) {
+    if (!InvMouse) return null;
+    return InvMouse.processInventoryAction({
+        button: button,
+        mode: currentMouseMode(),
+        modifiers: {
+            shift: !!(ev && ev.shiftKey),
+            ctrl: !!(ev && (ev.ctrlKey || ev.metaKey)),
+            alt: !!(ev && ev.altKey),
+            meta: !!(ev && ev.metaKey)
+        },
+        leftPressed: buttonsDown.left,
+        rightPressed: buttonsDown.right,
+        slot: slotState
+    });
+}
+
+function combatIntentsFromEvent(ev, button) {
+    if (!InvMouse) return null;
+    return InvMouse.processCombatRowAction({
+        button: button,
+        mode: currentMouseMode(),
+        modifiers: {
+            shift: !!(ev && ev.shiftKey),
+            ctrl: !!(ev && (ev.ctrlKey || ev.metaKey)),
+            alt: !!(ev && ev.altKey),
+            meta: !!(ev && ev.metaKey)
+        },
+        leftPressed: buttonsDown.left,
+        rightPressed: buttonsDown.right
+    });
+}
+
+function applyInventoryIntents(intents, ctx) {
+    if (!intents || !intents.length) return '';
+    const intent = intents[0];
+    const type = intent && intent.type ? intent.type : '';
+    const item = ctx && ctx.item;
+    const x = ctx && ctx.clientX;
+    const y = ctx && ctx.clientY;
+    if (type === 'IGNORE') return type;
+    if (type === 'SELECT') return type;
+    if (type === 'LOOK') {
+        hideCtx();
+        if (item) showItemPopover(x, y, item.id, item.count, true);
+        return type;
+    }
+    if (type === 'OPEN_CONTEXT_MENU') {
+        if (ctx.kind === 'equipment') showEquipMenu(x, y, item, ctx.slotKey);
+        else showInvMenu(x, y, item, ctx.containerId, ctx.index);
+        return type;
+    }
+    hideCtx();
+    if (type === 'OPEN_BAG') {
+        if (ctx.kind === 'equipment') {
+            openEquippedContainer(ctx.slotKey, item, ctx.originEl);
+        } else if (ctx.containerId != null) {
+            requestOpenBag(ctx.containerId, ctx.index, item && item.id ? item.id : '', ctx.originEl);
+        }
+        return type;
+    }
+    if (type === 'CLOSE_BAG') {
+        if (ctx.openUid) requestCloseBag(ctx.openUid);
+        return type;
+    }
+    if (type === 'OPEN_BACKPACK') {
+        openSidebarPanel('backpack');
+        return type;
+    }
+    if (type === 'USE_ITEM') {
+        if (ctx.kind !== 'equipment' && ctx.containerId != null) {
+            send(C2S.USE_ITEM, encodeContainerSlot(ctx.containerId, ctx.index));
+        }
+        return type;
+    }
+    if (type === 'ENTER_USE_WITH') {
+        if (item && item.id) {
+            pendingUseWith = item.id;
+            fct('Use ' + itemLabel(item.id) + ' with…');
+        }
+        return type;
+    }
+    if (type === 'EQUIP') {
+        if (ctx.containerId != null) {
+            send(C2S.EQUIP, encodeEquip(ctx.containerId, ctx.index, ''));
+        }
+        return type;
+    }
+    if (type === 'UNEQUIP') {
+        if (ctx.slotKey) send(C2S.UNEQUIP, encodeUnequip(ctx.slotKey));
+        return type;
+    }
+    return type;
+}
+
+function enableAutoChaseAndTarget(id) {
+    autoChase = true;
+    saveAutoChase(true);
+    const box = $('auto-chase');
+    if (box) box.checked = true;
+    selectTarget(id);
+}
+
+function applyCombatIntents(intents, row, clientX, clientY) {
+    if (!intents || !intents.length) return '';
+    const type = intents[0] && intents[0].type ? intents[0].type : '';
+    if (type === 'LOOK') {
+        hideCtx();
+        fct(row && row.name ? row.name : 'Creature');
+        return type;
+    }
+    if (type === 'SET_TARGET') {
+        selectTarget(row.id);
+        return type;
+    }
+    if (type === 'AUTO_CHASE') {
+        enableAutoChaseAndTarget(row.id);
+        return type;
+    }
+    if (type === 'OPEN_CONTEXT_MENU') {
+        showCombatMenu(clientX, clientY, row);
+        return type;
+    }
+    return type;
+}
+
+function showCombatMenu(clientX, clientY, row) {
+    const el = $('ctx-menu');
+    if (!el || !row) return;
+    hideItemPopover(true);
+    el.textContent = '';
+    const entries = InvMouse && typeof InvMouse.buildCombatContextMenuEntries === 'function'
+        ? InvMouse.buildCombatContextMenuEntries()
+        : [
+            { action: 'ATTACK', label: 'Attack' },
+            { action: 'LOOK', label: 'Look' },
+            { action: 'CHASE', label: 'Chase' }
+        ];
+    entries.forEach(function (entry) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'inv-context-item';
+        b.textContent = entry.label;
+        b.onclick = function () {
+            hideCtx();
+            if (entry.action === 'LOOK') fct(row.name || 'Creature');
+            else if (entry.action === 'CHASE') enableAutoChaseAndTarget(row.id);
+            else selectTarget(row.id);
+        };
+        el.appendChild(b);
+    });
+    placeCtxMenu(el, clientX, clientY);
+}
+
+function slotLookChord(ev, button, slotState, ctx) {
+    if (!InvMouse || !InvMouse.isClassicLookChord) return false;
+    if (!InvMouse.isClassicLookChord({
+        mode: currentMouseMode(),
+        button: button,
+        leftPressed: buttonsDown.left,
+        rightPressed: buttonsDown.right
+    })) {
+        return false;
+    }
+    ev.preventDefault();
+    suppressNextSlotClick = true;
+    suppressNextContextMenu = true;
+    applyInventoryIntents([{ type: slotState && !slotState.empty ? 'LOOK' : 'IGNORE' }], ctx);
+    return true;
+}
+
+/** Slot count from BAG/INVENTORY capacity. Do not pad small containers (quiver=6) to 20. */
+function gridCapacity(view) {
+    if (!view || view.capacity == null) return BACKPACK_SLOTS;
+    const n = Number(view.capacity);
+    if (n !== n) return BACKPACK_SLOTS;
+    return Math.max(0, Math.min(255, n | 0));
+}
+
 function paintGrid(el, view, selectedIndex, kind) {
     if (!el) return;
-    const cap = Math.max(20, (view && view.capacity) || BACKPACK_SLOTS);
-    const containerId = (view && view.containerId) ? view.containerId : (kind === 'nested' ? 'open-bag' : 'root');
+    const cap = gridCapacity(view);
+    const containerId = (view && view.containerId) ? view.containerId : '';
 
     while (el.children.length < cap) {
         const s = document.createElement('div');
@@ -898,15 +1595,51 @@ function paintGrid(el, view, selectedIndex, kind) {
             bindItemPopover(slot, null);
         }
 
+        slot.onpointerdown = function (ev) {
+            if (ev.button === 0) buttonsDown.left = true;
+            if (ev.button === 2) buttonsDown.right = true;
+            if (ev.button !== 0) return;
+            const state = containerSlotState(it, containerId, i);
+            slotLookChord(ev, 'left', state, {
+                kind: 'container',
+                item: it,
+                containerId: containerId,
+                index: i,
+                originEl: slot,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
+        };
+
         slot.onclick = function (ev) {
             ev.preventDefault();
+            if (suppressNextSlotClick) {
+                suppressNextSlotClick = false;
+                return;
+            }
+            const state = containerSlotState(it, containerId, i);
+            const intents = inventoryIntentsFromEvent(ev, 'left', state);
+            const applied = applyInventoryIntents(intents, {
+                kind: 'container',
+                item: it,
+                containerId: containerId,
+                index: i,
+                originEl: slot,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
+            if (applied && applied !== 'SELECT' && applied !== '') return;
             if (kind === 'bag') {
                 selectedBag = it ? (selectedBag === i ? -1 : i) : -1;
                 selectedEquipSlot = null;
                 renderBag();
                 renderEquipment();
             } else if (kind === 'nested') {
-                selectedOpenBag = it ? (selectedOpenBag === i ? -1 : i) : -1;
+                const rec = containerId ? openBags.get(containerId) : null;
+                if (rec) rec.selected = it ? (rec.selected === i ? -1 : i) : -1;
+                selectedOpenBag = rec ? rec.selected : -1;
                 renderBag();
             }
         };
@@ -915,7 +1648,7 @@ function paintGrid(el, view, selectedIndex, kind) {
             ev.preventDefault();
             if (!it || !containerId) return;
             if (it.flags & 1) {
-                send(C2S.OPEN_BAG, encodeContainerSlot(containerId, i));
+                requestOpenBag(containerId, i, it.id || '', slot);
             } else {
                 send(C2S.USE_ITEM, encodeContainerSlot(containerId, i));
             }
@@ -923,15 +1656,36 @@ function paintGrid(el, view, selectedIndex, kind) {
 
         slot.oncontextmenu = function (ev) {
             ev.preventDefault();
+            if (suppressNextContextMenu) {
+                suppressNextContextMenu = false;
+                return;
+            }
             if (!it) return;
             if (kind === 'bag') {
                 selectedBag = i;
                 renderBag();
             } else if (kind === 'nested') {
+                const rec = containerId ? openBags.get(containerId) : null;
+                if (rec) rec.selected = i;
                 selectedOpenBag = i;
                 renderBag();
             }
-            showInvMenu(ev.clientX, ev.clientY, it, containerId, i);
+            const state = containerSlotState(it, containerId, i);
+            const intents = inventoryIntentsFromEvent(ev, 'right', state);
+            if (!intents) {
+                showInvMenu(ev.clientX, ev.clientY, it, containerId, i);
+                return;
+            }
+            applyInventoryIntents(intents, {
+                kind: 'container',
+                item: it,
+                containerId: containerId,
+                index: i,
+                originEl: slot,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
         };
 
         slot.ondragstart = function (ev) {
@@ -952,19 +1706,24 @@ function paintGrid(el, view, selectedIndex, kind) {
 
 function renderBag() {
     paintGrid($('backpackGrid'), bag, selectedBag, 'bag');
-    const nested = $('openBagPanel');
-    if (nested) nested.hidden = !openBag || !openBag.containerId;
-    if (openBag && openBag.containerId) {
-        const title = $('openBagTitle');
-        if (title) title.textContent = 'Bag';
-        const countEl = $('openBagCount');
-        if (countEl) {
-            const filledCount = openBag.slots ? openBag.slots.length : 0;
-            const capCount = openBag.capacity || 20;
-            countEl.textContent = '(' + filledCount + '/' + capCount + ')';
+    openBags.forEach(function (rec) {
+        if (!rec.panel) rec.panel = createFloatBagPanel(rec.view && rec.view.containerId);
+        if (!rec.panel) return;
+        rec.panel.hidden = false;
+        const parts = bagPanelParts(rec.panel);
+        if (parts.title) parts.title.textContent = itemLabel(rec.itemId) || 'Bag';
+        if (parts.count) {
+            const filledCount = rec.view && rec.view.slots ? rec.view.slots.length : 0;
+            parts.count.textContent = '(' + filledCount + '/' + gridCapacity(rec.view) + ')';
         }
-        paintGrid($('openBagGrid'), openBag, selectedOpenBag, 'nested');
-    }
+        paintGrid(parts.grid, rec.view, rec.selected, 'nested');
+        if (!rec.placed) {
+            placeNewFloat(rec.panel, pendingOpenBagAnchor || { origin: 'slot' });
+            rec.placed = true;
+            pendingOpenBagAnchor = null;
+        }
+    });
+    syncFloatRootAria();
 }
 
 function renderEquipment() {
@@ -978,6 +1737,7 @@ function renderEquipment() {
         el.innerHTML = '';
         if (it) {
             el.classList.add('is-filled', 'inv-equip-slot');
+            el.classList.toggle('is-container', equipItemIsContainer(it));
             el.classList.toggle('is-selected', selectedEquipSlot === key);
             el.setAttribute('draggable', 'true');
             el.dataset.itemId = it.id;
@@ -1001,7 +1761,7 @@ function renderEquipment() {
             };
             el.appendChild(img);
         } else {
-            el.classList.remove('is-filled', 'inv-equip-slot', 'is-selected');
+            el.classList.remove('is-filled', 'inv-equip-slot', 'is-selected', 'is-container');
             el.setAttribute('draggable', 'false');
             delete el.dataset.itemId;
             el.title = el.getAttribute('title') || key;
@@ -1023,9 +1783,41 @@ function renderEquipment() {
         };
         el.ondragend = onDragEnd;
 
+        el.onpointerdown = function (ev) {
+            if (ev.button === 0) buttonsDown.left = true;
+            if (ev.button === 2) buttonsDown.right = true;
+            if (ev.button !== 0 || !key || key === 'light') return;
+            const state = equipSlotState(it, key);
+            slotLookChord(ev, 'left', state, {
+                kind: 'equipment',
+                item: it,
+                slotKey: key,
+                originEl: el,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
+        };
+
         el.onclick = function (ev) {
             ev.preventDefault();
+            if (suppressNextSlotClick) {
+                suppressNextSlotClick = false;
+                return;
+            }
             if (!key || key === 'light') return;
+            const state = equipSlotState(it, key);
+            const intents = inventoryIntentsFromEvent(ev, 'left', state);
+            const applied = applyInventoryIntents(intents, {
+                kind: 'equipment',
+                item: it,
+                slotKey: key,
+                originEl: el,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
+            if (applied && applied !== 'SELECT' && applied !== '') return;
             if (it) {
                 selectedEquipSlot = (selectedEquipSlot === key ? null : key);
                 selectedBag = -1;
@@ -1039,15 +1831,37 @@ function renderEquipment() {
         el.ondblclick = function (ev) {
             ev.preventDefault();
             if (!key || key === 'light' || !it) return;
+            if (equipItemIsContainer(it)) {
+                openEquippedContainer(key, it);
+                return;
+            }
             send(C2S.UNEQUIP, encodeUnequip(key));
         };
 
         el.oncontextmenu = function (ev) {
             ev.preventDefault();
+            if (suppressNextContextMenu) {
+                suppressNextContextMenu = false;
+                return;
+            }
             if (!it) return;
             selectedEquipSlot = key;
             renderEquipment();
-            showEquipMenu(ev.clientX, ev.clientY, it, key);
+            const state = equipSlotState(it, key);
+            const intents = inventoryIntentsFromEvent(ev, 'right', state);
+            if (!intents) {
+                showEquipMenu(ev.clientX, ev.clientY, it, key);
+                return;
+            }
+            applyInventoryIntents(intents, {
+                kind: 'equipment',
+                item: it,
+                slotKey: key,
+                originEl: el,
+                openUid: state.openUid,
+                clientX: ev.clientX,
+                clientY: ev.clientY
+            });
         };
     }
     const capEl = $('activeEqCap');
@@ -1624,20 +2438,12 @@ function cancelClickWalk() {
     pendingAfterWalk = null;
     chaseWalk = false;
     walkQueued = false;
+    walkBusy = false;
     if (notify) send(C2S.MOVE_PATH, Uint8Array.of(0));
 }
 
-function chaseRange() {
-    const it = equipment.weapon;
-    const id = it && (it.id || it.itemId);
-    const meta = id ? itemCatalog.get(id) : null;
-    if (meta) {
-        if (meta.range != null && Number(meta.range) > 0) return Math.max(1, meta.range | 0);
-        const kind = String(meta.category || meta.weaponType || meta.type || '').toLowerCase();
-        if (kind.indexOf('distance') >= 0 || kind === 'bow' || kind === 'crossbow') return 6;
-        if (kind === 'wand' || kind === 'rod' || kind === 'magic') return 4;
-    }
-    return 1;
+function chaseApproachRange() {
+    return Path && Path.CHASE_APPROACH_RANGE != null ? Path.CHASE_APPROACH_RANGE : 1;
 }
 
 function pumpChase() {
@@ -1648,18 +2454,15 @@ function pumpChase() {
     const tgt = others.get(targetId);
     if (!tgt || (tgt.hp | 0) <= 0) return;
     if ((tgt.z | 0) !== (self.z | 0)) return;
-    const range = chaseRange();
+    const range = chaseApproachRange();
     if (Path.chebyshev(self.x, self.y, tgt.x, tgt.y) <= range) {
-        if (chaseWalk) {
-            walkDest = null;
-            chaseWalk = false;
-        }
+        if (chaseWalk) stopWalk();
         return;
     }
     const dest = Path.nearestApproach(self, tgt, range, isWalkable);
     if (!dest) return;
     if ((self.x | 0) === (dest.x | 0) && (self.y | 0) === (dest.y | 0)) {
-        chaseWalk = false;
+        if (chaseWalk) stopWalk();
         return;
     }
     if (walkDest && (walkDest.x | 0) === (dest.x | 0) && (walkDest.y | 0) === (dest.y | 0)) {
@@ -1843,6 +2646,19 @@ function applyIntents(intents, clientX, clientY) {
             case 'OPEN_CONTEXT_MENU':
                 showCanvasMenu(intent.hit, clientX, clientY);
                 break;
+            case 'OPEN_BAG':
+                if (intent.containerId) {
+                    requestOpenBag(
+                        intent.containerId,
+                        intent.index != null ? intent.index : OPEN_BAG_SELF_INDEX,
+                        intent.item && intent.item.id,
+                        null
+                    );
+                }
+                break;
+            case 'PICKUP':
+                sendPickup(intent.tile, intent.stackIndex, intent.item, null);
+                break;
             case 'QUICKLOOT':
                 fct('Not available yet.');
                 break;
@@ -1938,6 +2754,14 @@ function placeCtxMenu(el, x, y) {
     const host = ctxMenuHost();
     if (host && el.parentNode !== host) host.appendChild(el);
     el.hidden = false;
+    if (FloatPlace && typeof FloatPlace.placeContextMenu === 'function') {
+        FloatPlace.placeContextMenu(el, x, y, {
+            win: typeof window !== 'undefined' ? window : null,
+            fallbackW: 160,
+            fallbackH: 80
+        });
+        return;
+    }
     const pad = 8;
     const menuW = el.offsetWidth || 160;
     const menuH = el.offsetHeight || 80;
@@ -1953,6 +2777,16 @@ function placeCtxMenu(el, x, y) {
     if (top > vh - menuH - pad) top = Math.max(pad, vh - menuH - pad);
     el.style.left = left + 'px';
     el.style.top = top + 'px';
+}
+
+// HuntDL placeContextMenu: right-align below the sort button, flip if the
+// right rail would clip the menu, then clamp to the viewport.
+function placeCombatSortDropdown() {
+    const btn = $('combatSortBtn');
+    const el = $('combatSortDropdown');
+    if (!btn || !el) return;
+    const r = btn.getBoundingClientRect();
+    placeCtxMenu(el, r.right, r.bottom + 2);
 }
 
 function showCanvasMenu(hit, clientX, clientY) {
@@ -1981,6 +2815,10 @@ function showCanvasMenu(hit, clientX, clientY) {
                     tile: { x: hit.x, y: hit.y, z: hit.z },
                     worldPin: hit.worldPin
                 }]);
+            } else if (entry.action === 'OPEN_BAG' && hit.groundUseUid) {
+                applyIntents([Mouse.groundOpenBagIntent(hit, hit.groundUseUid)]);
+            } else if (entry.action === 'PICKUP' && hit.pickableUid) {
+                applyIntents([Mouse.groundPickupIntent(hit, hit.pickableUid, hit.pickableStackIndex)]);
             } else if (entry.action === 'USE_STAIR') {
                 applyIntents([{ type: 'USE_STAIR' }]);
             } else if (entry.action === 'WALK') {
@@ -2016,7 +2854,9 @@ function showInvMenu(clientX, clientY, item, containerId, index) {
         rows.push({
             label: 'Open',
             fn: function () {
-                if (containerId != null) send(C2S.OPEN_BAG, encodeContainerSlot(containerId, index));
+                if (containerId) {
+                    requestOpenBag(containerId, index, item && item.id ? item.id : '', findInvSlotEl(containerId, index));
+                }
             }
         });
     }
@@ -2105,6 +2945,11 @@ function getEntityAtPixel(px, py, z) {
 }
 
 function onCanvasPointerMove(ev) {
+    if (groundDrag && !groundDrag.dragging) {
+        const dx = Math.abs(ev.clientX - groundDrag.startX);
+        const dy = Math.abs(ev.clientY - groundDrag.startY);
+        if (dx > 4 || dy > 4) groundDrag.dragging = true;
+    }
     if (!canvas || (!viewport && !self)) return;
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -2126,6 +2971,75 @@ function onCanvasPointerLeave() {
         hoveredEntityId = 0;
         draw();
     }
+}
+
+function finishCanvasGroundDrag(ev) {
+    const drag = groundDrag;
+    groundDrag = null;
+    if (!drag || !drag.dragging) return false;
+    if (!groundByUid.has(drag.uid)) return true;
+    const under = typeof document !== 'undefined'
+        ? document.elementFromPoint(ev.clientX, ev.clientY)
+        : null;
+    if (under && typeof under.closest === 'function') {
+        const slot = under.closest('.inv-slot, .backpack-slot, .slot-item, [data-slot-index], [data-inv-index], [data-slot], [data-eq-slot]');
+        if (slot) {
+            const idx = slot.getAttribute('data-slot-index') || slot.getAttribute('data-inv-index');
+            const eq = slot.getAttribute('data-slot') || slot.getAttribute('data-eq-slot');
+            const cid = slot.getAttribute('data-container-uid') || slot.getAttribute('data-container-id') || bag.containerId || 'root';
+            if (eq) {
+                moveItemWithSplit(
+                    tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
+                    { kind: 'equipment', slot: eq },
+                    drag.item,
+                    ev
+                );
+                return true;
+            }
+            if (idx != null) {
+                moveItemWithSplit(
+                    tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
+                    { kind: 'container', containerUid: cid, index: idx | 0 },
+                    drag.item,
+                    ev
+                );
+                return true;
+            }
+        }
+        const panel = under.closest('.game-backpack-panel, #backpackGrid, #backpackScroll, .inv-float-panel, #inventoryFloatRoot');
+        if (panel) {
+            const floatCont = under.closest('.inv-float-panel');
+            const targetUid = (floatCont && floatCont.getAttribute('data-container-uid')) || bag.containerId || 'root';
+            moveItemWithSplit(
+                tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
+                { kind: 'container', containerUid: targetUid, index: 0 },
+                drag.item,
+                ev
+            );
+            return true;
+        }
+    }
+    const dest = canvasTile(ev);
+    if (!dest) return true;
+    if (self && (dest.x | 0) === (self.x | 0) && (dest.y | 0) === (self.y | 0) && (dest.z | 0) === (self.z | 0)) {
+        moveItemWithSplit(
+            tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
+            backpackMoveDest(),
+            drag.item,
+            ev
+        );
+        return true;
+    }
+    if ((dest.x | 0) === (drag.x | 0) && (dest.y | 0) === (drag.y | 0) && (dest.z | 0) === (drag.z | 0)) {
+        return true;
+    }
+    moveItemWithSplit(
+        tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
+        tileMoveLoc(dest.x, dest.y, dest.z, 0),
+        drag.item,
+        ev
+    );
+    return true;
 }
 
 function onCanvasPointer(ev) {
@@ -2158,6 +3072,37 @@ function onCanvasPointer(ev) {
         applyIntents([Mouse.buildLookIntent(hit)]);
         return;
     }
+    if (button === 'left' && hit && hit.groundMoveUid && Mouse.allowGroundLmbDrag({
+        hit: hit,
+        mode: mouse.mouseControlMode,
+        modifiers: { shift: ev.shiftKey, ctrl: ev.ctrlKey, alt: ev.altKey, meta: ev.metaKey }
+    })) {
+        groundDrag = {
+            uid: hit.groundMoveUid,
+            x: hit.x,
+            y: hit.y,
+            z: hit.z,
+            stackIndex: hit.groundMoveItem && hit.groundMoveItem.stackIndex != null
+                ? hit.groundMoveItem.stackIndex | 0
+                : 0,
+            item: hit.groundMoveItem || { id: '', count: 1 },
+            startX: ev.clientX,
+            startY: ev.clientY,
+            dragging: false,
+            hit: hit,
+            ev: ev
+        };
+        currentDrag = {
+            kind: 'ground',
+            uid: groundDrag.uid,
+            x: groundDrag.x,
+            y: groundDrag.y,
+            z: groundDrag.z,
+            stackIndex: groundDrag.stackIndex,
+            item: groundDrag.item
+        };
+        return;
+    }
     const intents = Mouse.processMouseAction({
         button: button,
         mode: mouse.mouseControlMode,
@@ -2175,6 +3120,40 @@ function onCanvasPointer(ev) {
         playerTile: self
     });
     applyIntents(intents, ev.clientX, ev.clientY);
+}
+
+function onCanvasPointerUp(ev) {
+    if (ev.button !== 0 && ev.button !== 2) return;
+    if (groundDrag) {
+        const drag = groundDrag;
+        const dx = Math.abs(ev.clientX - drag.startX);
+        const dy = Math.abs(ev.clientY - drag.startY);
+        if (dx > 4 || dy > 4) drag.dragging = true;
+        if (finishCanvasGroundDrag(ev)) {
+            currentDrag = null;
+            return;
+        }
+        const hit = drag.hit;
+        groundDrag = null;
+        currentDrag = null;
+        const intents = Mouse.processMouseAction({
+            button: 'left',
+            mode: mouse.mouseControlMode,
+            lootMode: mouse.lootControlMode,
+            talkOnRightClick: mouse.talkOnRightClick,
+            modifiers: {
+                shift: ev.shiftKey,
+                ctrl: ev.ctrlKey,
+                alt: ev.altKey,
+                meta: ev.metaKey
+            },
+            hit: hit,
+            playerControlMode: 'manual',
+            playerAlive: !downed,
+            playerTile: self
+        });
+        applyIntents(intents, ev.clientX, ev.clientY);
+    }
 }
 
 function onFrame(bytes, tokenHex) {
@@ -2487,13 +3466,44 @@ function onFrame(bytes, tokenHex) {
         draw();
         return;
     }
+    if (opcode === S2C.GROUND) {
+        const slot = {
+            x: r.i16(),
+            y: r.i16(),
+            z: r.i8(),
+            stackIndex: r.u8(),
+            uid: r.str(),
+            id: r.str(),
+            count: r.u16(),
+            flags: 0
+        };
+        if (r.o < r.b.length) slot.flags = r.u8();
+        upsertGroundSlot(slot);
+        draw();
+        return;
+    }
+    if (opcode === S2C.GROUND_GONE) {
+        const uid = r.str();
+        if (r.o + 5 <= r.b.length) {
+            r.i16(); r.i16(); r.i8();
+        }
+        removeGroundUid(uid);
+        draw();
+        return;
+    }
     if (opcode === S2C.CONTAINER) {
         const id = r.u32(), n = r.u8();
         const items = [];
         for (let i = 0; i < n; i++) items.push({ id: r.str(), count: r.u16() });
-        openCorpse = id;
         const targetContainer = corpses.get(id) || worldPins.get(id);
         if (targetContainer) targetContainer.items = items;
+        if (!items.length) {
+            openCorpse = 0;
+            hideFloat('loot-panel');
+            draw();
+            return;
+        }
+        openCorpse = id;
         renderLoot(items);
         draw();
         return;
@@ -2577,15 +3587,14 @@ function onFrame(bytes, tokenHex) {
         const n = r.u8();
         equipment = {};
         for (let i = 0; i < n; i++) {
-            equipment[r.str()] = { id: r.str(), count: r.u16() };
+            const slot = r.str();
+            equipment[slot] = { id: r.str(), count: r.u16(), flags: r.u8() };
         }
         renderEquipment();
         return;
     }
     if (opcode === S2C.BAG) {
-        const view = readBagView(r);
-        openBag = view.containerId ? view : null;
-        renderBag();
+        applyBagView(readBagView(r));
         return;
     }
     if (opcode === S2C.SKILLS) {
@@ -2714,6 +3723,8 @@ function connect(cfg, tokenHex) {
     corpses = new Map();
     worldPins = new Map();
     groundItems = new Map();
+    groundByUid = new Map();
+    groundDrag = null;
     fields = new Map();
     pendingUseWith = null;
     seenAt = new Map();
@@ -2755,11 +3766,13 @@ function syncMouseUi() {
     const modeEl = $('mouse-mode');
     const lootEl = $('loot-mode');
     const talkEl = $('talk-right');
+    const stackEl = $('move-stack');
     const lootWrap = $('loot-mode-wrap');
     const talkWrap = $('talk-right-wrap');
     if (modeEl) modeEl.value = String(mouse.mouseControlMode);
     if (lootEl) lootEl.value = String(mouse.lootControlMode);
     if (talkEl) talkEl.checked = mouse.talkOnRightClick;
+    if (stackEl) stackEl.checked = mouse.moveStack === true;
     if (lootWrap) lootWrap.hidden = mouse.mouseControlMode !== 1;
     if (talkWrap) talkWrap.hidden = mouse.mouseControlMode !== 0;
 }
@@ -2803,16 +3816,60 @@ if (canvas) {
     canvas.addEventListener('pointerdown', onCanvasPointer);
     canvas.addEventListener('pointermove', onCanvasPointerMove);
     canvas.addEventListener('pointerleave', onCanvasPointerLeave);
-    window.addEventListener('pointerup', function (ev) {
-        if (ev.button === 0) buttonsDown.left = false;
-        if (ev.button === 2) buttonsDown.right = false;
+    canvas.addEventListener('dragover', function (ev) {
+        if (!currentDrag) return;
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    });
+    canvas.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        if (!currentDrag || !self) return;
+        const dest = canvasTile(ev);
+        if (!dest) return;
+        if (currentDrag.kind === 'container') {
+            moveItemWithSplit(
+                { kind: 'container', containerUid: currentDrag.containerId, index: currentDrag.slotIndex },
+                tileMoveLoc(dest.x, dest.y, dest.z, 0),
+                currentDrag.item,
+                ev
+            );
+        } else if (currentDrag.kind === 'equipment') {
+            moveItemWithSplit(
+                { kind: 'equipment', slot: currentDrag.slot },
+                tileMoveLoc(dest.x, dest.y, dest.z, 0),
+                currentDrag.item,
+                ev
+            );
+        } else if (currentDrag.kind === 'ground') {
+            if (!groundByUid.has(currentDrag.uid)) return;
+            moveItemWithSplit(
+                tileMoveLoc(currentDrag.x, currentDrag.y, currentDrag.z, currentDrag.stackIndex),
+                tileMoveLoc(dest.x, dest.y, dest.z, 0),
+                currentDrag.item,
+                ev
+            );
+        }
+        onDragEnd();
     });
 }
 
+window.addEventListener('pointerdown', function (ev) {
+    if (ev.button === 0) buttonsDown.left = true;
+    if (ev.button === 2) buttonsDown.right = true;
+}, true);
+window.addEventListener('pointerup', function (ev) {
+    if (ev.button === 0) buttonsDown.left = false;
+    if (ev.button === 2) buttonsDown.right = false;
+    onCanvasPointerUp(ev);
+});
+window.addEventListener('pointercancel', function (ev) {
+    if (ev.button === 0) buttonsDown.left = false;
+    if (ev.button === 2) buttonsDown.right = false;
+});
+
 window.addEventListener('keydown', function (ev) {
     if (!self || downed) return;
-    const tag = ev.target && ev.target.tagName;
-    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (KeyWalk.isTypingTarget && KeyWalk.isTypingTarget(ev.target)) return;
     if (ev.key === 'Escape') {
         ev.preventDefault();
         keyWalk.reset();
@@ -2894,7 +3951,7 @@ function initCollapsiblePanels() {
         if (header) {
             header.addEventListener('click', function (ev) {
                 const t = ev.target;
-                if (t && (t.closest('button') || t.closest('.combat-sort-container') || t.closest('.panel-title-actions') || t.closest('select'))) {
+                if (t && (t.closest('button') || t.closest('.combat-sort-container') || t.closest('#combatSortDropdown') || t.closest('.panel-title-actions') || t.closest('select'))) {
                     return;
                 }
                 const isCollapsed = sec.classList.toggle('panel-collapsed');
@@ -3026,7 +4083,7 @@ function initSidebarPanels() {
             btn.className = 'btn btn-xs panel-toggle-btn';
             btn.setAttribute('data-panel-toggle', def.id);
             btn.setAttribute('aria-label', 'Toggle ' + def.label);
-            btn.innerHTML = '<i class="fa-solid ' + def.icon + '" aria-hidden="true"></i> <span class="panel-toggle-label"> ' + def.label + '</span>';
+            btn.innerHTML = '<i class="fa-solid ' + def.icon + '" aria-hidden="true"></i>';
             bar.appendChild(btn);
         }
         btn.onclick = function (ev) {
@@ -3079,10 +4136,19 @@ document.addEventListener('DOMContentLoaded', function () {
             mouse = saveMouseControls(mouse);
         });
     }
+    const stackEl = $('move-stack');
+    if (stackEl) {
+        stackEl.addEventListener('change', function () {
+            mouse.moveStack = stackEl.checked === true;
+            mouse = saveMouseControls(mouse);
+            if (typeof stackEl.blur === 'function') stackEl.blur();
+        });
+    }
     if (chaseEl) {
         chaseEl.addEventListener('change', function () {
             autoChase = chaseEl.checked;
             saveAutoChase(autoChase);
+            if (typeof chaseEl.blur === 'function') chaseEl.blur();
             if (autoChase) pumpChase();
             else if (chaseWalk) stopWalk();
         });
@@ -3111,14 +4177,20 @@ document.addEventListener('DOMContentLoaded', function () {
     if (sortBtn && sortDropdown) {
         sortBtn.addEventListener('click', function (ev) {
             ev.stopPropagation();
-            sortDropdown.hidden = !sortDropdown.hidden;
+            if (sortDropdown.hidden) placeCombatSortDropdown();
+            else sortDropdown.hidden = true;
         });
         document.addEventListener('click', function (ev) {
             if (!sortDropdown.hidden) {
                 const t = ev.target;
-                if (!t || !t.closest || !t.closest('.combat-sort-container')) {
-                    sortDropdown.hidden = true;
+                if (
+                    t &&
+                    t.closest &&
+                    (t.closest('.combat-sort-container') || t.closest('#combatSortDropdown'))
+                ) {
+                    return;
                 }
+                sortDropdown.hidden = true;
             }
         });
     }
@@ -3161,6 +4233,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         const onFsChange = function () {
             hideCtx();
+            reparentFloatRoot();
             if (typeof EngineActionBarAssign !== 'undefined' && EngineActionBarAssign.closeAll) {
                 EngineActionBarAssign.closeAll();
             }
@@ -3193,6 +4266,13 @@ document.addEventListener('DOMContentLoaded', function () {
             getOthers: function () { return others; },
             getBag: function () { return bag; },
             getOpenBag: function () { return openBag; },
+            getOpenBags: function () {
+                const out = [];
+                openBags.forEach(function (rec) {
+                    if (rec && rec.view) out.push(rec.view);
+                });
+                return out;
+            },
             getEquipment: function () { return equipment; },
             getTick: function () { return lastTick; },
             getUps: function () { return ups; },
@@ -3238,10 +4318,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initSidebarPanels();
     renderEquipment();
     loadItemCatalog();
-    $('openBagClose') && $('openBagClose').addEventListener('click', function () {
-        openBag = null;
-        renderBag();
-    });
+    reparentFloatRoot();
     $('equipment-details') && $('equipment-details').addEventListener('click', function () {
         const modal = $('profile-modal');
         const body = $('profile-body');

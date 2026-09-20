@@ -90,6 +90,7 @@ function testResponsiveAndFullscreen() {
     assert.ok(playHtml.includes('id="actionBarDockBottom"'), 'play.html has actionBarDockBottom');
     assert.ok(playHtml.includes('/js/action_bars.js'), 'play.html loads action_bars.js');
     assert.ok(playHtml.includes('/js/action_bar_assign.js'), 'play.html loads action_bar_assign.js');
+    assert.ok(playHtml.includes('/js/inventory_mouse.js'), 'play.html loads inventory_mouse.js');
     assert.ok(playJs.includes('data-item-id') || playJs.includes('dataset.itemId'), 'play.js stamps data-item-id for assign pick');
     assert.ok(playJs.includes('tryHandleSlotDrop'), 'play.js drop fallback binds action-bar slots');
     assert.ok(playHtml.includes('id="actionBarDockLeft"'), 'play.html has actionBarDockLeft');
@@ -125,6 +126,9 @@ function testResponsiveAndFullscreen() {
     assert.ok(/function showInvMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'inventory RMB uses placeCtxMenu');
     assert.ok(/function showCanvasMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'canvas RMB uses placeCtxMenu');
     assert.ok(/function showEquipMenu\([\s\S]{0,4000}placeCtxMenu\(el, clientX, clientY\)/.test(playJs), 'equip RMB uses placeCtxMenu');
+    assert.ok(playJs.includes('function placeCombatSortDropdown'), 'play.js places combat sort via placeCtxMenu');
+    assert.ok(/function placeCombatSortDropdown\([\s\S]{0,600}placeCtxMenu\(el, r\.right, r\.bottom/.test(playJs), 'combat sort dropdown right-aligns then flips');
+    assert.ok(/\.combat-sort-dropdown-menu\{[^}]*position:fixed/.test(css), 'combat sort dropdown is viewport-fixed');
     assert.ok(!playJs.includes('canvasOverlayRoot'), 'ctx-menu is not canvas-wrapper absolute');
     assert.ok(playHtml.includes('id="ctx-menu"'), 'play.html has ctx-menu');
     assert.ok(!/canvas-center-wrapper[\s\S]{0,800}id="ctx-menu"/.test(playHtml), 'ctx-menu is not inside canvas-center-wrapper');
@@ -141,6 +145,7 @@ function testInventoryActions() {
     assert.strictEqual(feProto.C2S.MOVE_ITEM, 42, 'C2S.MOVE_ITEM is 42');
     assert.strictEqual(feProto.C2S.USE_ITEM, 43, 'C2S.USE_ITEM is 43');
     assert.strictEqual(feProto.C2S.OPEN_BAG, 44, 'C2S.OPEN_BAG is 44');
+    assert.strictEqual(feProto.C2S.CLOSE_BAG, 45, 'C2S.CLOSE_BAG is 45');
 
     // Server-side decoders parity (if server exists)
     const serverMessagesPath = path.join(SERVER_DIR, 'src/protocol/messages.js');
@@ -190,9 +195,51 @@ function testInventoryActions() {
         assert.strictEqual(decodedOpen.index, 0);
     }
     assert.ok(playJs.includes('C2S.OPEN_BAG'), 'play.js dispatches C2S.OPEN_BAG');
-    assert.ok(playJs.includes('openBagPanel'), 'play.js manages openBagPanel');
-    assert.ok(playJs.includes('openBagCount'), 'play.js updates openBagCount');
-    assert.ok(playJs.includes('openBagClose'), 'play.js wires openBagClose');
+    assert.ok(playJs.includes('inventoryFloatRoot'), 'play.js hosts bag floats in inventoryFloatRoot');
+    assert.ok(playJs.includes('inv-float-panel'), 'play.js builds .inv-float-panel windows');
+    assert.ok(playJs.includes('function focusOpenBagWindow'), 'second Open focuses the existing window');
+    assert.ok(playJs.includes('function findExistingOpenBagUid'), 'one window per uid (equipment slot maps to instance)');
+    assert.ok(playJs.includes('function placeNewFloat'), 'play.js places floats with the HuntDL algorithm');
+    assert.ok(playJs.includes('function gridCapacity'), 'open-container grids use BAG capacity, not a 20-slot pad');
+    assert.ok(!/Math\.max\(\s*20\s*,\s*\(view && view\.capacity\)/.test(playJs),
+        'paintGrid does not force every container to 20 slots');
+    {
+        const m = playJs.match(/function gridCapacity\(view\) \{[\s\S]*?\n\}/);
+        assert.ok(m, 'gridCapacity is a closed function');
+        const gridCapacity = new Function('BACKPACK_SLOTS', m[0] + '\nreturn gridCapacity;')(20);
+        assert.strictEqual(gridCapacity({ capacity: 6 }), 6, 'quiver-sized container stays 6 slots');
+        assert.strictEqual(gridCapacity({ capacity: 12 }), 12, 'unicorn quiver stays 12 slots');
+        assert.strictEqual(gridCapacity({ capacity: 32 }), 32, 'big bag is not capped at 20');
+        assert.strictEqual(gridCapacity({ capacity: 0 }), 0, 'capacity 0 is a close signal, not 20 slots');
+        assert.strictEqual(gridCapacity({ capacity: 20 }), 20, 'typical backpack is 20');
+        assert.strictEqual(gridCapacity(null), 20, 'missing view falls back to backpack default');
+    }
+    assert.ok(playJs.includes('function openEquippedContainer'), 'play.js opens equipped containers');
+    assert.ok(playJs.includes('function equipItemIsContainer'), 'play.js reads equipment container flags');
+    assert.ok(playJs.includes('requestOpenBag(slotKey, 0'), 'OPEN_BAG from paperdoll uses designer slot');
+    assert.ok(playJs.includes('C2S.CLOSE_BAG'), 'play.js dispatches C2S.CLOSE_BAG');
+    assert.strictEqual(typeof feProto.encodeCloseBag, 'function', 'protocol.js encodes CLOSE_BAG str');
+    assert.ok(playJs.includes('encodeCloseBag'), 'play.js uses encodeCloseBag');
+    assert.ok(playJs.includes('function requestOpenBag'), 'play.js opens from parent containerId');
+    assert.ok(playJs.includes('function requestCloseBag'), 'play.js close sends CLOSE_BAG');
+    assert.ok(playJs.includes('getOpenBags:'), 'play.js exposes every open BAG view to action bars');
+    assert.ok(playJs.includes('processInventoryAction'), 'play.js uses the inventory mouse matrix');
+    assert.ok(playJs.includes('processCombatRowAction'), 'play.js uses the combat-list mouse matrix');
+    assert.ok(playJs.includes('function showCombatMenu'), 'combat-list RMB is Attack/Look/Chase');
+    assert.ok(playJs.includes('function enableAutoChaseAndTarget'), 'Chase menu item still enables the stance');
+    assert.ok(playJs.includes('function chaseApproachRange'), 'chase stand-off is not weapon range');
+    assert.ok(!playJs.includes('function chaseRange'), 'weapon-range chase helper is gone');
+    assert.ok(playJs.includes('CHASE_APPROACH_RANGE'), 'chase uses path_walk adjacent stand-off');
+    assert.ok(playJs.includes('isTypingTarget'), 'WASD ignores checkbox focus, not every INPUT');
+    if (serverMessages) {
+        assert.strictEqual(serverMessages.decodeCloseBag(feProto.encodeCloseBag('')), '');
+        assert.strictEqual(serverMessages.decodeCloseBag(feProto.encodeCloseBag('i9')), 'i9');
+    }
+    assert.ok(!playJs.includes('cloneNode(true)'), 'nested bags no longer clone the sidebar panel');
+    assert.ok(playJs.includes('itemLabel(rec.itemId)'), 'open bag title uses catalog label');
+    assert.ok(!playJs.includes("kind === 'nested' ? 'open-bag'"), 'OPEN_BAG does not fall back to open-bag');
+    assert.ok(!playJs.includes("kind === 'bag' ? 'root'") && !playJs.includes("kind === 'nested' ? 'open-bag' : 'root'"),
+        'OPEN_BAG does not fall back to root/open-bag');
 
     // 5. Moving Items Action
     // Container to Container
@@ -228,6 +275,22 @@ function testInventoryActions() {
     }
     assert.ok(playJs.includes('C2S.MOVE_ITEM'), 'play.js dispatches C2S.MOVE_ITEM');
     assert.ok(playJs.includes('encodeMoveItem'), 'play.js uses encodeMoveItem');
+    assert.strictEqual(feProto.LOC_KIND.TILE, 2);
+    assert.strictEqual(feProto.S2C.GROUND, 136);
+    const moveTile = feProto.encodeMoveItem(
+        { kind: 'tile', x: 8, y: 9, z: 0, stackIndex: 0 },
+        { kind: 'container', containerUid: 'root', index: 0 },
+        0
+    );
+    if (serverMessages) {
+        const decodedTile = serverMessages.decodeMoveItem(moveTile);
+        assert.strictEqual(decodedTile.from.kind, 'tile');
+        assert.strictEqual(decodedTile.from.x, 8);
+        assert.strictEqual(decodedTile.to.kind, 'container');
+    }
+    assert.ok(playJs.includes('S2C.GROUND'), 'play.js handles GROUND');
+    assert.ok(playJs.includes('function sendPickup') || playJs.includes('sendPickup('), 'play.js pickup dest is backpack');
+    assert.ok(playJs.includes('allowGroundLmbDrag'), 'play.js gates Smart ground drag');
 
     // 6. Tooltips & Sprites
     const swordSprite = Sprites.resolveItemSpriteUrl('iron_longsword', 'rpg_fantasy');
@@ -245,11 +308,14 @@ function testInventoryActions() {
     assert.ok(playJs.includes('function showItemPopover'), 'item popover from equipment.json');
     assert.ok(playJs.includes('function showStackSplitModal'), 'split-count drag modal');
     assert.ok(playJs.includes('function resolveStackMoveAmount'), 'split-count modifiers');
+    assert.ok(playJs.includes('mouse.moveStack'), 'split drag reads moveStack pref');
+    assert.ok(playJs.includes("('move-stack')"), 'play.js wires the moveStack checkbox');
     assert.ok(playJs.includes('function makeItemRow'), 'loot/shop rows use item sprites');
     assert.ok(playJs.includes("pin.kind === 'door' && (pin.flags & 1)"), 'closed door blocking bit matches server flags');
 
     const playHtml = fs.readFileSync(path.join(FRONTEND_ROOT, 'static/play.html'), 'utf8');
     assert.ok(playHtml.includes('id="item-popover"'), 'play.html has item-popover');
+    assert.ok(playHtml.includes('id="move-stack"'), 'play.html has move-stack checkbox');
     const css = fs.readFileSync(APP_CSS, 'utf8');
     assert.ok(/\.item-popover\{[^}]*position:fixed/.test(css), 'item-popover is viewport-fixed');
     assert.ok(css.includes('.inv-stack-split-modal'), 'split modal CSS landed');

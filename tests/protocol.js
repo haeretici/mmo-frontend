@@ -17,6 +17,7 @@ function main() {
     assert.strictEqual(fe.S2C.CAST, 129);
     assert.ok(!Object.prototype.hasOwnProperty.call(fe.S2C, 'HOTKEYS'));
     assert.strictEqual(fe.C2S.SHOP_SELL, 34);
+    assert.strictEqual(fe.C2S.CLOSE_BAG, 45);
     assert.strictEqual(fe.S2C.HELLO, 100);
     assert.strictEqual(fe.S2C.SHOP, 132);
     assert.strictEqual(fe.S2C.SKILLS, 124);
@@ -49,6 +50,10 @@ function main() {
 
     assert.strictEqual(fe.LOC_KIND.CONTAINER, 0);
     assert.strictEqual(fe.LOC_KIND.EQUIPMENT, 1);
+    assert.strictEqual(fe.LOC_KIND.TILE, 2);
+    assert.strictEqual(fe.S2C.GROUND, 136);
+    assert.strictEqual(fe.S2C.GROUND_GONE, 137);
+    assert.strictEqual(fe.OPEN_BAG_SELF_INDEX, 255);
     const movePayload = fe.encodeMoveItem(
         { kind: 'container', containerUid: 'root', index: 2 },
         { kind: 'equipment', slot: 'head' },
@@ -67,6 +72,7 @@ function main() {
         assert.strictEqual(fe.APPEAR_FLAG.NPC, se.APPEAR_FLAG.NPC);
         assert.strictEqual(fe.LOC_KIND.CONTAINER, se.LOC_KIND.CONTAINER);
         assert.strictEqual(fe.LOC_KIND.EQUIPMENT, se.LOC_KIND.EQUIPMENT);
+        assert.strictEqual(fe.LOC_KIND.TILE, se.LOC_KIND.TILE);
         const messages = require(path.join(__dirname, '../../server/src/protocol/messages.js'));
         assert.strictEqual(fe.SWING_ELEMENT.FIRE, se.SWING_ELEMENT.FIRE);
         assert.strictEqual(fe.swingElementName(se.SWING_ELEMENT.FIRE), 'fire');
@@ -82,6 +88,27 @@ function main() {
         assert.strictEqual(feAppear.dir, 3);
         assert.strictEqual(feAppear.look, 'rat');
 
+        const closeAll = fe.encodeCloseBag('');
+        const closeOne = fe.encodeCloseBag('i3');
+        assert.strictEqual(messages.decodeCloseBag(closeAll), '');
+        assert.strictEqual(messages.decodeCloseBag(closeOne), 'i3');
+        assert.strictEqual(messages.decodeCloseBag(new Uint8Array(0)), '');
+
+        const eqFlags = messages.encodeEquipment({
+            cap: 100,
+            capMax: 200,
+            slots: [
+                { slot: 'shield', id: 'quiver', count: 1, flags: 1 },
+                { slot: 'weapon', id: 'hunter_bow', count: 1, flags: 0 }
+            ]
+        });
+        const feEq = fe.decodeEquipment(eqFlags);
+        assert.strictEqual(feEq.slots[0].flags, 1);
+        assert.strictEqual(feEq.slots[1].flags, 0);
+        const srvEq = messages.decodeEquipment(eqFlags);
+        assert.strictEqual(srvEq.slots[0].flags, 1);
+        assert.strictEqual(srvEq.slots[1].id, 'hunter_bow');
+
         const decodedMove = messages.decodeMoveItem(movePayload);
         assert.strictEqual(decodedMove.from.kind, 'container');
         assert.strictEqual(decodedMove.from.containerUid, 'root');
@@ -89,6 +116,25 @@ function main() {
         assert.strictEqual(decodedMove.to.kind, 'equipment');
         assert.strictEqual(decodedMove.to.slot, 'head');
         assert.strictEqual(decodedMove.count, 5);
+
+        const tilePayload = fe.encodeMoveItem(
+            { kind: 'tile', x: 12, y: -3, z: 0, stackIndex: 0 },
+            { kind: 'container', containerUid: 'root', index: 0 },
+            3
+        );
+        const decodedTile = messages.decodeMoveItem(tilePayload);
+        assert.strictEqual(decodedTile.from.kind, 'tile');
+        assert.strictEqual(decodedTile.from.x, 12);
+        assert.strictEqual(decodedTile.from.y, -3);
+        assert.strictEqual(decodedTile.from.stackIndex, 0);
+        assert.strictEqual(decodedTile.count, 3);
+        const groundBuf = messages.encodeGround({
+            x: 4, y: 5, z: 0, stackIndex: 0, uid: 'i2', id: 'gold_coin', count: 3, flags: 0
+        });
+        const g = messages.decodeGround(groundBuf);
+        assert.strictEqual(g.uid, 'i2');
+        assert.strictEqual(g.id, 'gold_coin');
+        assert.strictEqual(g.count, 3);
 
         // Cast parity: frontend encoder -> server decoder
         const castBuf = fe.encodeCast({ spellId: 'snap_jab', targetId: 101, x: 12, y: 15, z: 6 });

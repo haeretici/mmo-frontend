@@ -43,7 +43,7 @@ UX facts come from the reference client (`legacy/client/modules/game_actionbar`,
 | `t` | Slice | Fire |
 | :--- | ---: | :--- |
 | `spell` | 1 | `C2S.CAST` `spellId` + `targetId` + `x,y,z` |
-| `item` | 1 | find first bag/eq stack with `itemId` → `USE_ITEM` or `EQUIP` if equipable. Rune `USE_ITEM` already `runCast` |
+| `item` | 1 | find first stack with `itemId` in backpack, every open `BAG` window (focused first), then equipment → `USE_ITEM` or `EQUIP` if equipable. Rune `USE_ITEM` already `runCast`. Count badge sums the same windows. Host: `getOpenBags()` plus last-focused `getOpenBag()` |
 | `multi` | 1 | first ready sub-slot (depth ≤ **3**; sub = spell/item/text) |
 | `text` | 1 | canvas FCT over the player (HuntDL analog). Not C2S chat |
 | `passive` | later | only if a vocation authors one |

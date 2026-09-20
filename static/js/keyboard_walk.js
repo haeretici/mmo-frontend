@@ -32,6 +32,27 @@
         return d == null ? null : d;
     }
 
+    /**
+     * True when a HUD control should keep the key (chat, name fields, dropdowns).
+     * Checkboxes / radios (Auto Chase) must not swallow WASD.
+     */
+    function isTypingTarget(el) {
+        if (!el) return false;
+        if (el.isContentEditable) return true;
+        const tag = String(el.tagName || '').toUpperCase();
+        if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        if (tag !== 'INPUT') return false;
+        const type = String(el.type || 'text').toLowerCase();
+        if (
+            type === 'checkbox' || type === 'radio' || type === 'button'
+            || type === 'submit' || type === 'reset' || type === 'range'
+            || type === 'file' || type === 'color' || type === 'hidden'
+        ) {
+            return false;
+        }
+        return true;
+    }
+
     function create(opts) {
         const autoRepeatDelayMs = opts && opts.autoRepeatDelayMs != null
             ? Math.max(0, opts.autoRepeatDelayMs | 0)
@@ -100,6 +121,7 @@
         KEY_PRESS_REPEAT_MS,
         DIR_BY_CODE,
         dirOf,
+        isTypingTarget,
         create
     };
 });

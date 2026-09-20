@@ -79,6 +79,12 @@
         return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
     }
 
+    /**
+     * Auto-chase stand-off. Canary player follow uses minTargetDist =
+     * maxTargetDist = 1 for every vocation; weapon range is attack, not chase.
+     */
+    const CHASE_APPROACH_RANGE = 1;
+
     function nearestApproach(from, target, range, isWalkable) {
         if (!from || !target) return null;
         const r = Math.max(0, range | 0);
@@ -115,6 +121,7 @@
         tileAt,
         findOrthogonalPath,
         nearestApproach,
-        chebyshev
+        chebyshev,
+        CHASE_APPROACH_RANGE
     };
 });

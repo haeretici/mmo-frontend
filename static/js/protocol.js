@@ -33,7 +33,8 @@
         UNEQUIP: 41,
         MOVE_ITEM: 42,
         USE_ITEM: 43,
-        OPEN_BAG: 44
+        OPEN_BAG: 44,
+        CLOSE_BAG: 45
     });
 
     const S2C = Object.freeze({
@@ -66,8 +67,10 @@
         DIALOG_CLOSE: 131,
         SHOP: 132,
         FIELD: 133,
-        FIELD_GONE: 134
+        FIELD_GONE: 134,
         // 135 unused (was HOTKEYS; bars are client IndexedDB)
+        GROUND: 136,
+        GROUND_GONE: 137
     });
 
     const REASON = Object.freeze({
@@ -93,6 +96,7 @@
     });
 
     const APPEAR_FLAG = Object.freeze({ NPC: 1 });
+    const INV_FLAG = Object.freeze({ CONTAINER: 1 });
     const SWING_FLAG = Object.freeze({ MISS: 1, DEATH: 2, CRIT: 4, FATAL: 8 });
     const SWING_ELEMENT = Object.freeze({
         PHYSICAL: 0,
@@ -211,8 +215,10 @@
 
     const LOC_KIND = Object.freeze({
         CONTAINER: 0,
-        EQUIPMENT: 1
+        EQUIPMENT: 1,
+        TILE: 2
     });
+    const OPEN_BAG_SELF_INDEX = 255;
 
     function encodeUnequip(slot) {
         const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
@@ -223,9 +229,24 @@
         return p;
     }
 
+    function encodeCloseBag(containerId) {
+        return encodeUnequip(containerId || '');
+    }
+
     function writeItemLoc(loc) {
         const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
-        const isEquip = loc && (loc.kind === 'equipment' || loc.kind === LOC_KIND.EQUIPMENT || (loc.slot && !loc.containerUid && !loc.containerId));
+        const isTile = loc && (loc.kind === 'tile' || loc.kind === LOC_KIND.TILE);
+        if (isTile) {
+            const b = new Uint8Array(1 + 2 + 2 + 1 + 1);
+            const v = new DataView(b.buffer);
+            b[0] = LOC_KIND.TILE;
+            v.setInt16(1, loc.x | 0, true);
+            v.setInt16(3, loc.y | 0, true);
+            b[5] = loc.z | 0;
+            b[6] = (loc.stackIndex | 0) & 0xff;
+            return b;
+        }
+        const isEquip = loc && (loc.kind === 'equipment' || loc.kind === LOC_KIND.EQUIPMENT || (loc.slot && !loc.containerUid && !loc.containerId && loc.kind !== 'container'));
         if (isEquip) {
             const slotb = enc ? enc.encode(String(loc.slot || '')) : Buffer.from(String(loc.slot || ''), 'utf8');
             const b = new Uint8Array(1 + 1 + slotb.length);
@@ -391,16 +412,30 @@
         return out;
     }
 
+    function decodeEquipment(payload) {
+        const r = new Reader(payload);
+        const cap = r.u16();
+        const capMax = r.u16();
+        const n = r.u8();
+        const slots = [];
+        for (let i = 0; i < n; i++) {
+            slots.push({ slot: r.str(), id: r.str(), count: r.u16(), flags: r.u8() });
+        }
+        return { cap, capMax, slots };
+    }
+
     return {
         C2S,
         S2C,
         REASON,
         APPEAR_FLAG,
+        INV_FLAG,
         SWING_FLAG,
         SWING_ELEMENT,
         SWING_ELEMENT_NAMES,
         SKILL_ORDER,
         LOC_KIND,
+        OPEN_BAG_SELF_INDEX,
         hexToBytes,
         encodeFrame,
         u32buf,
@@ -410,6 +445,7 @@
         encodeContainerSlot,
         encodeEquip,
         encodeUnequip,
+        encodeCloseBag,
         encodeMoveItem,
         encodeMovePath,
         encodeCast,
@@ -419,6 +455,7 @@
         decodeField,
         decodeFieldGone,
         decodeSay,
+        decodeEquipment,
         swingElementId,
         swingElementName,
         fieldCreatedAtMs,

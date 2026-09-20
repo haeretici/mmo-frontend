@@ -172,6 +172,40 @@
         return '';
     }
 
+    function forEachBagView(openBag, fn) {
+        if (!openBag || typeof fn !== 'function') return;
+        if (Array.isArray(openBag)) {
+            for (let i = 0; i < openBag.length; i++) {
+                if (openBag[i]) fn(openBag[i]);
+            }
+            return;
+        }
+        fn(openBag);
+    }
+
+    /** Focused window first, then every other open BAG. Dedupes by containerId. */
+    function hostOpenBagViews(host) {
+        if (!host) return [];
+        const seen = Object.create(null);
+        const out = [];
+        function push(view) {
+            if (!view || !Array.isArray(view.slots)) return;
+            const key = view.containerId != null ? String(view.containerId) : '';
+            const id = key || '#';
+            if (seen[id]) return;
+            seen[id] = true;
+            out.push(view);
+        }
+        if (typeof host.getOpenBag === 'function') push(host.getOpenBag());
+        if (typeof host.getOpenBags === 'function') {
+            const list = host.getOpenBags();
+            if (Array.isArray(list)) {
+                for (let i = 0; i < list.length; i++) push(list[i]);
+            }
+        }
+        return out;
+    }
+
     function countItemId(itemId, bag, openBag, equipment) {
         const id = String(itemId || '');
         if (!id) return 0;
@@ -184,7 +218,7 @@
             }
         }
         walk(bag);
-        walk(openBag);
+        forEachBagView(openBag, walk);
         if (equipment && typeof equipment === 'object') {
             const keys = Object.keys(equipment);
             for (let i = 0; i < keys.length; i++) {
@@ -313,7 +347,11 @@
         }
         const fromBag = inBag(bag);
         if (fromBag) return fromBag;
-        const fromOpen = inBag(openBag);
+        let fromOpen = null;
+        forEachBagView(openBag, function (view) {
+            if (fromOpen) return;
+            fromOpen = inBag(view);
+        });
         if (fromOpen) return fromOpen;
         if (equipment && typeof equipment === 'object') {
             const keys = Object.keys(equipment);
@@ -560,7 +598,7 @@
                 const count = countItemId(
                     paint.id,
                     state.host && state.host.getBag && state.host.getBag(),
-                    state.host && state.host.getOpenBag && state.host.getOpenBag(),
+                    hostOpenBagViews(state.host),
                     state.host && state.host.getEquipment && state.host.getEquipment()
                 );
                 const cbadge = document.createElement('span');
@@ -817,7 +855,7 @@
                 const count = countItemId(
                     sub.id,
                     state.host && state.host.getBag && state.host.getBag(),
-                    state.host && state.host.getOpenBag && state.host.getOpenBag(),
+                    hostOpenBagViews(state.host),
                     state.host && state.host.getEquipment && state.host.getEquipment()
                 );
                 return count > 0;
@@ -869,7 +907,7 @@
             const loc = findItemLoc(
                 slot.id,
                 state.host && state.host.getBag && state.host.getBag(),
-                state.host && state.host.getOpenBag && state.host.getOpenBag(),
+                hostOpenBagViews(state.host),
                 state.host && state.host.getEquipment && state.host.getEquipment()
             );
             if (!loc || loc.kind !== 'container') return false;
@@ -1159,8 +1197,13 @@
             if (!state.host || (state.host.isDowned && state.host.isDowned())) return;
             const Assign = assignApi();
             if (Assign && Assign.isBusy && Assign.isBusy()) return;
-            const tag = ev.target && ev.target.tagName;
-            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            if (typeof EngineKeyboardWalk !== 'undefined'
+                && typeof EngineKeyboardWalk.isTypingTarget === 'function') {
+                if (EngineKeyboardWalk.isTypingTarget(ev.target)) return;
+            } else {
+                const tag = ev.target && ev.target.tagName;
+                if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            }
             const combo = Assign && Assign.eventToHotkeyString
                 ? Assign.eventToHotkeyString(ev)
                 : (ev.key ? String(ev.key).toUpperCase() : '');

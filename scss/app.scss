@@ -622,6 +622,90 @@ canvas#world {
   }
 }
 
+// Nested bag floating windows (HuntDL #inventoryFloatRoot).
+// pointer-events none on the overlay; panels restore auto. z-index sits
+// above the canvas (loot/dialog 100) and below .ctx-menu (1400).
+#inventoryFloatRoot,
+.inv-float-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1200;
+}
+
+#inventoryFloatRoot .inv-float-panel {
+  min-width: 180px;
+  max-width: 220px;
+  padding: 0.35rem 0.4rem 0.5rem;
+  border-radius: 0;
+  z-index: 1;
+  overflow: hidden;
+
+  .inv-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    margin-bottom: 0.35rem;
+    cursor: move;
+    user-select: none;
+  }
+
+  .inv-panel-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-main, #{$text-main});
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .inv-panel-count {
+    font-size: 0.68rem;
+    color: var(--text-muted, #{$text-muted});
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .inv-panel-close {
+    border: 1px solid var(--border-color, #{$border-color});
+    background: var(--bg-dark, #{$bg-dark});
+    color: var(--text-muted, #{$text-muted});
+    border-radius: 0;
+    width: 1.2rem;
+    height: 1.2rem;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+
+    &:hover {
+      color: var(--text-main, #{$text-main});
+      border-color: var(--accent-primary, #{$accent-primary});
+    }
+  }
+
+  .inv-panel-scroll {
+    max-height: calc(6 * 32px + 5 * 6px + 4px);
+  }
+
+  .inv-panel-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 32px);
+    grid-auto-rows: 32px;
+    gap: 6px;
+    justify-content: center;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
+  }
+}
+
 // Floating panels (dialog / shop / loot)
 .float-panel,
 .inv-float-panel {
@@ -1091,11 +1175,13 @@ canvas#world {
   }
 }
 
-// Combat sort container in panel header
+// Combat sort button in the panel header. The menu itself is viewport-fixed
+// (HuntDL placeContextMenu) so .play-inventory { overflow-y: auto } on the
+// right rail cannot clip it.
 .combat-sort-container {
   display: inline-flex;
   align-items: center;
-  position: relative;
+  position: static;
 
   .combat-sort-btn {
     font-size: 0.55rem;
@@ -1109,47 +1195,50 @@ canvas#world {
     justify-content: center;
     cursor: pointer;
   }
+}
 
-  .combat-sort-dropdown-menu {
-    position: absolute;
-    top: calc(100% + 2px);
-    right: 0;
-    z-index: 1050;
-    background: #0d1117;
-    border: 1px solid var(--border-color, #{$border-color});
-    border-radius: 4px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
-    max-height: 260px;
-    overflow-y: auto;
-    padding: 0.25rem 0;
-    box-sizing: border-box;
+.combat-sort-container .combat-sort-dropdown-menu,
+.combat-sort-dropdown-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+  left: auto;
+  z-index: 1400;
+  min-width: 10rem;
+  background: #0d1117;
+  border: 1px solid var(--border-color, #{$border-color});
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+  box-sizing: border-box;
+}
+
+.combat-sort-item {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  color: var(--text-muted, #{$text-muted});
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e6edf3;
   }
 
-  .combat-sort-item {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.7rem;
-    color: var(--text-muted, #{$text-muted});
-    cursor: pointer;
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    transition: background-color 0.15s ease, color 0.15s ease;
+  &.active {
+    color: #00ffcc;
+    font-weight: 600;
+    background: rgba(0, 255, 204, 0.08);
 
-    &:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: #e6edf3;
-    }
-
-    &.active {
-      color: #00ffcc;
-      font-weight: 600;
-      background: rgba(0, 255, 204, 0.08);
-
-      &::after {
-        content: "\2713";
-        margin-left: 0.4rem;
-      }
+    &::after {
+      content: "\2713";
+      margin-left: 0.4rem;
     }
   }
 }
@@ -1208,11 +1297,6 @@ canvas#world {
       opacity: 0.5;
     }
 
-    .panel-toggle-label {
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
   }
 }
 

@@ -102,6 +102,7 @@ function main() {
         'keyboard MOVE_STEP skips known blocked dest so walkBusy is not locked');
     assert.ok(playHtml.includes('id="npc-dialog"'));
     assert.ok(playHtml.includes('id="death-overlay"'));
+    assert.ok(playHtml.includes('id="move-stack"'), 'Controls has moveStack checkbox');
     assert.ok(playHtml.includes('value="1" selected'));
     assert.ok(!playHtml.includes('id="huntSelect"'));
     assert.ok(!playHtml.includes('id="seedInput"'));
@@ -110,6 +111,13 @@ function main() {
     const mouseJs = js.find((f) => f.name === 'js/mouse_dispatcher.js');
     assert.ok(mouseJs);
     assert.ok(mouseJs.text.includes('processMouseAction'));
+    const invMouse = js.find((f) => f.name === 'js/inventory_mouse.js');
+    assert.ok(invMouse, 'inventory_mouse.js');
+    assert.ok(invMouse.text.includes('processInventoryAction'), 'inventory_mouse.js has processInventoryAction');
+    assert.ok(invMouse.text.includes('processCombatRowAction'), 'inventory_mouse.js has processCombatRowAction');
+    assert.ok(!invMouse.text.includes('require('), 'inventory_mouse.js does not require HuntDL');
+    assert.ok(!mouseJs.text.includes('processInventoryAction'), 'canvas dispatcher stays canvas-pure');
+    assert.ok(playHtml.includes('js/inventory_mouse.js'), 'play loads inventory_mouse.js');
 
     const prefsMouse = prefs.text.includes('engine.mouseControls');
     assert.ok(prefsMouse);
@@ -157,6 +165,10 @@ function main() {
     assert.ok(actionAssign.text.includes('Assign Spell'));
     assert.ok(actionAssign.text.includes('openAssignMultiModal'));
     assert.ok(!actionAssign.text.includes('SET_HOTKEYS'));
+    const floatPlace = js.find((f) => f.name === 'js/float_panel_place.js');
+    assert.ok(floatPlace, 'float_panel_place.js');
+    assert.ok(floatPlace.text.includes('computeFloatPosition'), 'float_panel_place.js has computeFloatPosition');
+    assert.ok(!floatPlace.text.includes('require('), 'float_panel_place.js does not require HuntDL');
     const actionBars = js.find((f) => f.name === 'js/action_bars.js');
     assert.ok(actionBars, 'action_bars.js');
     assert.ok(actionBars.text.includes('F1'));
@@ -172,6 +184,8 @@ function main() {
     assert.ok(playHtml.includes('game-live-section'), 'play has game-live-section');
     assert.ok(playHtml.includes('game-live-tile'), 'play has game-live-tile');
     assert.ok(playHtml.includes('combatSortDropdown'), 'play has combatSortDropdown');
+    assert.ok(!playHtml.includes('combat-sort-container position-relative'), 'combat sort is not a relative clip host');
+    assert.ok(play.text.includes('function placeCombatSortDropdown'), 'play.js places combat sort via placeCtxMenu');
     assert.ok(playHtml.includes('skills-panel-scroll'), 'play has skills-panel-scroll');
     assert.ok(playHtml.includes('panel-collapsible-section'), 'play has panel-collapsible-section');
     assert.ok(play.text.includes('entity-list-hp-bar-fill'), 'play.js has entity-list-hp-bar-fill');
@@ -189,7 +203,9 @@ function main() {
     assert.ok(playHtml.includes('fa-helmet-safety'), 'play has fontawesome helmet icon');
     assert.ok(playHtml.includes('fa-shoe-prints'), 'play has fontawesome boots icon');
     assert.ok(playHtml.includes('backpack-slot inv-slot'), 'play has pre-rendered backpack-slot inv-slot');
-    assert.ok(playHtml.includes('id="openBagCount"'), 'play has openBagCount');
+    assert.ok(playHtml.includes('id="inventoryFloatRoot"'), 'play has inventoryFloatRoot');
+    assert.ok(playHtml.includes('js/float_panel_place.js'), 'play loads float_panel_place.js');
+    assert.ok(!playHtml.includes('id="openBagPanel"'), 'openBagPanel sidebar host is gone; floats own bag chrome');
     assert.ok(play.text.includes('resolveItemSpriteUrl'), 'play.js has resolveItemSpriteUrl');
     assert.ok(play.text.includes('formatItemTooltip'), 'play.js has formatItemTooltip');
     assert.ok(play.text.includes('encodeMoveItem'), 'play.js has encodeMoveItem');

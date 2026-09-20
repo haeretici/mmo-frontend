@@ -8,7 +8,7 @@
         root.EngineGroundRenderer = api;
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-    const MAX_GROUND_RENDER = 4;
+    const MAX_GROUND_RENDER = 10;
     const DEFAULT_TILE_SIZE = 32;
 
     const FIELD_KINDS = Object.freeze({
@@ -546,9 +546,6 @@
                 const px = (c.x - camX) * tw;
                 const py = (c.y - camY) * th;
                 drawCorpse(ctx, c, px, py, tw, th, opts);
-                if (Array.isArray(c.items) && c.items.length) {
-                    drawGroundItemStack(ctx, c.items, px, py, tw, th, opts);
-                }
             }
         }
 
@@ -576,9 +573,6 @@
                 const px = (pin.x - camX) * tw;
                 const py = (pin.y - camY) * th;
                 drawWorldPin(ctx, pin, px, py, tw, th, opts);
-                if (Array.isArray(pin.items) && pin.items.length) {
-                    drawGroundItemStack(ctx, pin.items, px, py, tw, th, opts);
-                }
             }
         }
     }

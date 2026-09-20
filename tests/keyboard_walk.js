@@ -30,6 +30,16 @@ function main() {
     assert.strictEqual(kw.dirOf('KeyS'), 2);
     assert.strictEqual(kw.dirOf('KeyA'), 3);
     assert.strictEqual(kw.dirOf('Space'), null);
+    assert.strictEqual(kw.isTypingTarget(null), false);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'DIV' }), false);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'INPUT', type: 'checkbox' }), false,
+        'Auto Chase checkbox must not swallow WASD');
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'INPUT', type: 'radio' }), false);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'INPUT', type: 'text' }), true);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'INPUT', type: 'password' }), true);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'TEXTAREA' }), true);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'SELECT' }), true);
+    assert.strictEqual(kw.isTypingTarget({ tagName: 'P', isContentEditable: true }), true);
 
     const w = kw.create();
     assert.strictEqual(w.keyDown('ArrowUp', 0), true);

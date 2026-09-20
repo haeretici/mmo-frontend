@@ -3,7 +3,7 @@
 /**
  * Canvas mouse action dispatcher — pure hit resolve + intent matrix.
  * Modes 0 Regular / 1 Classic (default) / 2 Smart. See HuntDL [29].
- * Product hits: creature, NPC, corpse, world pin, empty/self tile.
+ * Product hits: creature, NPC, corpse, world pin, ground stack, empty/self tile.
  */
 (function (root, factory) {
     const api = factory();
@@ -126,6 +126,63 @@
         }];
     }
 
+    function groundItemLookText(item) {
+        if (!item) return 'You see an item.';
+        const id = item.id || item.itemId || item.catalogId || 'item';
+        return 'You see ' + String(id).replace(/_/g, ' ') + '.';
+    }
+
+    function groundItemIsContainer(item) {
+        if (!item) return false;
+        if ((item.flags | 0) & 1) return true;
+        const cat = item.category != null ? String(item.category).toLowerCase() : '';
+        if (cat === 'container' || cat === 'backpack' || cat === 'bag' || cat === 'quiver') return true;
+        const id = String(item.id || item.itemId || '').toLowerCase();
+        if (id === 'bag' || id === 'backpack') return true;
+        if (id.indexOf('quiver') >= 0 || id.indexOf('backpack') >= 0) return true;
+        return false;
+    }
+
+    function groundOpenBagIntent(hit, uid) {
+        return {
+            type: 'OPEN_BAG',
+            containerId: uid,
+            index: 255,
+            ground: true,
+            tile: hit ? { x: hit.x, y: hit.y, z: hit.z } : null
+        };
+    }
+
+    function groundPickupIntent(hit, uid, stackIndex) {
+        return {
+            type: 'PICKUP',
+            uid: uid,
+            stackIndex: stackIndex | 0,
+            tile: { x: hit.x, y: hit.y, z: hit.z },
+            item: hit.pickableItem || hit.groundLookItem || null
+        };
+    }
+
+    function allowGroundLmbDrag(opts) {
+        const o = opts || {};
+        const hit = o.hit;
+        const mode = o.mode != null ? Number(o.mode) : 1;
+        const mods = normalizeModifiers(o.modifiers);
+        if (mods.shift || mods.ctrl || mods.alt) return false;
+        if (mode !== 2) return true;
+        if (!hit || !hit.groundMoveUid) return false;
+        if (hit.creature) return false;
+        const item = hit.groundMoveItem || hit.pickableItem;
+        if (item) {
+            if (groundItemIsContainer(item)) return false;
+            if (item.multiUse === true) return false;
+            if (item.usable === true || item.consumable === true) return false;
+            const cat = item.category != null ? String(item.category).toLowerCase() : '';
+            if (cat === 'rune' || cat === 'tool' || cat === 'potion' || cat === 'consumable') return false;
+        }
+        return true;
+    }
+
     function buildLookIntent(hit) {
         if (!hit) return { type: 'LOOK', style: 'fct', text: 'Nothing here.' };
         if (hit.creature) {
@@ -153,6 +210,16 @@
                 style: 'fct',
                 text: worldPinLookText(hit.worldPin),
                 worldPin: hit.worldPin,
+                tile: { x: hit.x, y: hit.y, z: hit.z }
+            };
+        }
+        if (hit.groundLookItem || hit.groundLookUid) {
+            return {
+                type: 'LOOK',
+                style: 'fct',
+                text: groundItemLookText(hit.groundLookItem),
+                item: hit.groundLookItem,
+                uid: hit.groundLookUid,
                 tile: { x: hit.x, y: hit.y, z: hit.z }
             };
         }
@@ -288,6 +355,8 @@
         if (corpseLoot) return corpseLoot;
         const pin = worldPinUseThingIntents(hit);
         if (pin) return pin;
+        if (hit.groundUseUid) return [groundOpenBagIntent(hit, hit.groundUseUid)];
+        if (hit.pickableUid) return [groundPickupIntent(hit, hit.pickableUid, hit.pickableStackIndex)];
         const usePad = useStairIntents(hit);
         if (usePad) return usePad;
         return walkOrStop(hit, flags);
@@ -308,9 +377,25 @@
         if (isCorpseLike(hit)) return [quicklootStubIntent(hit)];
         const pin = worldPinUseThingIntents(hit);
         if (pin) return pin;
+        if (hit.groundUseUid) return [groundOpenBagIntent(hit, hit.groundUseUid)];
+        if (hit.pickableUid) return [groundPickupIntent(hit, hit.pickableUid, hit.pickableStackIndex)];
         const usePad = useStairIntents(hit);
         if (usePad) return usePad;
         return unshiftedLeftDefault(hit);
+    }
+
+    /**
+     * Smart Ctrl: world-pin crate or corpse; else context menu.
+     * HuntDL analog minus ground pickable bags (C7).
+     */
+    function smartCtrl(hit) {
+        if (isWorldPinHit(hit) && String(hit.worldPin.kind) === 'container') {
+            const pin = worldPinUseThingIntents(hit);
+            if (pin) return pin;
+        }
+        if (isCorpseLike(hit)) return [openCorpseIntent(hit)];
+        if (hit.groundUseUid) return [groundOpenBagIntent(hit, hit.groundUseUid)];
+        return [openContextMenuIntent(hit)];
     }
 
     function processMouseAction(input) {
@@ -373,6 +458,8 @@
                 const usePad = useStairIntents(hit);
                 if (usePad) return usePad;
                 if (isCorpseLike(hit)) return [openCorpseIntent(hit)];
+                if (hit.groundUseUid) return [groundOpenBagIntent(hit, hit.groundUseUid)];
+                if (hit.pickableUid) return [groundPickupIntent(hit, hit.pickableUid, hit.pickableStackIndex)];
                 return [openContextMenuIntent(hit)];
             }
             if (button === 'left') {
@@ -387,10 +474,7 @@
         }
 
         if (mode === 2) {
-            if (mods.ctrl) {
-                if (isCorpseLike(hit)) return [openCorpseIntent(hit)];
-                return [openContextMenuIntent(hit)];
-            }
+            if (mods.ctrl) return smartCtrl(hit);
             if (button === 'left') {
                 if (flags.playerControlMode !== 'manual' || !flags.playerAlive) return [];
                 return smartUnshiftedLeft(hit, flags);
@@ -433,6 +517,11 @@
                 label: kind === 'container' ? 'Open' : 'Use'
             });
         }
+        if (hit.groundUseUid) {
+            entries.push({ action: 'OPEN_BAG', label: 'Open' });
+        } else if (hit.pickableUid) {
+            entries.push({ action: 'PICKUP', label: 'Pick up' });
+        }
         if (hit.isPlayerTile || hit.useStair) {
             entries.push({ action: 'USE_STAIR', label: 'Use' });
         }
@@ -464,7 +553,7 @@
             }
         }
         let corpse = null;
-        for (let i = 0; i < corpses.length; i++) {
+        for (let i = corpses.length - 1; i >= 0; i--) {
             const c = corpses[i];
             if (!c) continue;
             if ((c.x | 0) === x && (c.y | 0) === y && (c.z | 0) === z) {
@@ -489,6 +578,31 @@
                 break;
             }
         }
+        const groundList = o.groundItems || [];
+        let tileGround = null;
+        for (let i = 0; i < groundList.length; i++) {
+            const g = groundList[i];
+            if (!g) continue;
+            if ((g.x | 0) === x && (g.y | 0) === y && (g.z | 0) === z) {
+                tileGround = g;
+                break;
+            }
+        }
+        let items = [];
+        if (tileGround) {
+            if (Array.isArray(tileGround.items)) items = tileGround.items;
+            else if (Array.isArray(tileGround)) items = tileGround;
+        }
+        const top = items.length ? items[items.length - 1] : null;
+        let useItem = null;
+        let pickItem = null;
+        for (let i = items.length - 1; i >= 0; i--) {
+            const it = items[i];
+            if (!it) continue;
+            if (!useItem && groundItemIsContainer(it)) useItem = it;
+            if (!pickItem && !groundItemIsContainer(it)) pickItem = it;
+            if (useItem && pickItem) break;
+        }
         return {
             x: x,
             y: y,
@@ -503,7 +617,16 @@
             isCorpse: !!corpse,
             worldPin: worldPin,
             isPlayerTile: isPlayerTile,
-            useStair: !!o.useStair
+            useStair: !!o.useStair,
+            groundLookUid: top && (top.uid || top.containerId) || null,
+            groundLookItem: top,
+            groundMoveUid: top && (top.uid || top.containerId) || null,
+            groundMoveItem: top,
+            groundUseUid: useItem && (useItem.uid || useItem.containerId) || null,
+            groundUseItem: useItem,
+            pickableUid: pickItem && (pickItem.uid || pickItem.containerId) || null,
+            pickableItem: pickItem,
+            pickableStackIndex: pickItem ? (pickItem.stackIndex | 0) : 0
         };
     }
 
@@ -529,6 +652,10 @@
         processMouseAction,
         isClassicLookChord,
         buildCanvasContextMenuEntries,
-        resolveCanvasHit
+        resolveCanvasHit,
+        allowGroundLmbDrag,
+        groundOpenBagIntent,
+        groundPickupIntent,
+        groundItemIsContainer
     };
 });

@@ -42,6 +42,17 @@ function main() {
     assert.ok(approach);
     assert.ok(pw.chebyshev(approach.x, approach.y, 4, 0) <= 1);
 
+    assert.strictEqual(pw.CHASE_APPROACH_RANGE, 1, 'chase is adjacent, not weapon range');
+    const chaseDest = pw.nearestApproach(
+        { x: 0, y: 0 },
+        { x: 4, y: 0 },
+        pw.CHASE_APPROACH_RANGE,
+        walkable
+    );
+    assert.ok(chaseDest);
+    assert.strictEqual(pw.chebyshev(chaseDest.x, chaseDest.y, 4, 0), 1);
+    assert.ok(!(chaseDest.x === 0 && chaseDest.y === 0), 'Scout 4 sqm away still walks in');
+
     console.log('ok path_walk');
 }
 

@@ -115,11 +115,60 @@ function main() {
     });
     intents = md.processMouseAction({ button: 'right', mode: 1, hit: crate });
     assert.strictEqual(intents[0].type, 'OPEN_CONTAINER');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: crate,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTAINER', 'Smart Ctrl crate opens');
+    intents = md.processMouseAction({
+        button: 'right',
+        mode: 2,
+        hit: crate,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTAINER', 'Smart Ctrl RMB crate opens');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: corpse,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CORPSE', 'Smart Ctrl corpse opens');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: empty,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTEXT_MENU', 'Smart Ctrl empty is menu');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: herb,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTEXT_MENU', 'Smart Ctrl harvest is menu');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 0,
+        hit: crate,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTAINER', 'Regular Ctrl crate still opens');
     const trap = hit({
         worldPin: { id: 3000000003, kind: 'trap', catalogId: 'spike' }
     });
     intents = md.processMouseAction({ button: 'right', mode: 1, hit: trap });
     assert.notStrictEqual(intents[0].type, 'USE');
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: trap,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_CONTEXT_MENU', 'Smart Ctrl trap is menu');
     const pinHit = md.resolveCanvasHit({
         tile: { x: 62, y: 138, z: 7 },
         player: { id: 1, x: 62, y: 137, z: 7 },
@@ -132,6 +181,77 @@ function main() {
     assert.strictEqual(pinHit.worldPin.kind, 'harvest');
     const pinMenu = md.buildCanvasContextMenuEntries(herb);
     assert.ok(pinMenu.some((e) => e.action === 'USE'));
+
+    const bagHit = hit({
+        groundUseUid: 'i9',
+        groundUseItem: { uid: 'i9', id: 'bag', flags: 1 },
+        groundMoveUid: 'i9',
+        groundMoveItem: { uid: 'i9', id: 'bag', flags: 1, stackIndex: 0 },
+        groundLookUid: 'i9',
+        groundLookItem: { uid: 'i9', id: 'bag', flags: 1 }
+    });
+    intents = md.processMouseAction({ button: 'right', mode: 1, hit: bagHit });
+    assert.strictEqual(intents[0].type, 'OPEN_BAG');
+    assert.strictEqual(intents[0].index, 255);
+    intents = md.processMouseAction({
+        button: 'left',
+        mode: 2,
+        hit: bagHit,
+        modifiers: { ctrl: true }
+    });
+    assert.strictEqual(intents[0].type, 'OPEN_BAG', 'Smart Ctrl ground bag opens');
+    const coinHit = hit({
+        pickableUid: 'i3',
+        pickableItem: { uid: 'i3', id: 'gold_coin', count: 6, stackIndex: 0 },
+        pickableStackIndex: 0,
+        groundMoveUid: 'i3',
+        groundMoveItem: { uid: 'i3', id: 'gold_coin', count: 6, stackIndex: 0 },
+        groundLookUid: 'i3',
+        groundLookItem: { uid: 'i3', id: 'gold_coin', count: 6 }
+    });
+    intents = md.processMouseAction({ button: 'right', mode: 1, hit: coinHit });
+    assert.strictEqual(intents[0].type, 'PICKUP');
+    intents = md.processMouseAction({ button: 'left', mode: 2, hit: coinHit });
+    assert.strictEqual(intents[0].type, 'PICKUP', 'Smart LMB loose pickupable picks up');
+    assert.strictEqual(md.allowGroundLmbDrag({ hit: coinHit, mode: 2 }), true);
+    assert.strictEqual(md.allowGroundLmbDrag({ hit: bagHit, mode: 2 }), false, 'Smart does not drag bags');
+    assert.strictEqual(md.allowGroundLmbDrag({ hit: bagHit, mode: 1 }), true);
+    const resolvedG = md.resolveCanvasHit({
+        tile: { x: 4, y: 4, z: 0 },
+        player: { id: 1, x: 4, y: 3, z: 0 },
+        others: [],
+        corpses: [],
+        worldPins: [],
+        groundItems: [{
+            x: 4, y: 4, z: 0,
+            items: [
+                { uid: 'i1', id: 'gold_coin', count: 2, flags: 0, stackIndex: 1 },
+                { uid: 'i2', id: 'bag', count: 1, flags: 1, stackIndex: 0 }
+            ]
+        }],
+        tileId: 1,
+        walkable: true
+    });
+    assert.strictEqual(resolvedG.groundUseUid, 'i2');
+    assert.strictEqual(resolvedG.pickableUid, 'i1');
+    assert.strictEqual(resolvedG.groundMoveUid, 'i2');
+    const gMenu = md.buildCanvasContextMenuEntries(resolvedG);
+    const resolvedCorpseStack = md.resolveCanvasHit({
+        tile: { x: 5, y: 5, z: 0 },
+        player: { id: 1, x: 4, y: 5, z: 0 },
+        others: [],
+        corpses: [
+            { id: 2001, name: 'Old Rat', x: 5, y: 5, z: 0 },
+            { id: 2002, name: 'New Troll', x: 5, y: 5, z: 0 }
+        ],
+        worldPins: [],
+        groundItems: [],
+        tileId: 1,
+        walkable: true
+    });
+    assert.strictEqual(resolvedCorpseStack.isCorpse, true);
+    assert.strictEqual(resolvedCorpseStack.corpseId, 2002, 'topmost corpse is selected');
+    assert.strictEqual(resolvedCorpseStack.corpse.name, 'New Troll');
 
     console.log('ok mouse_dispatcher');
 }

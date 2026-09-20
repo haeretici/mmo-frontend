@@ -193,6 +193,41 @@ function main() {
             slots: [{ id: 'potion_health', count: 5 }]
         }, null, { ring: { id: 'potion_health', count: 1 } }), 6);
 
+        const quiverView = {
+            containerId: 'i2',
+            slots: [{ index: 0, id: 'simple_arrow', count: 100 }]
+        };
+        const nestedView = {
+            containerId: 'i5',
+            slots: [{ index: 1, id: 'gold_coin', count: 3 }]
+        };
+        assert.strictEqual(bars.countItemId('simple_arrow', {
+            containerId: 'root',
+            slots: []
+        }, nestedView, {}), 0, 'single unfocused open bag is not the quiver');
+        assert.strictEqual(bars.countItemId('simple_arrow', {
+            containerId: 'root',
+            slots: []
+        }, [nestedView, quiverView], {}), 100, 'count sums every open BAG window');
+        assert.strictEqual(bars.countItemId('gold_coin', {
+            containerId: 'root',
+            slots: [{ index: 2, id: 'gold_coin', count: 4 }]
+        }, [nestedView, quiverView], {}), 7);
+        const arrowLoc = bars.findItemLoc('simple_arrow', {
+            containerId: 'root',
+            slots: []
+        }, [nestedView, quiverView], {});
+        assert.strictEqual(arrowLoc.containerId, 'i2');
+        assert.strictEqual(arrowLoc.index, 0);
+        const focusedFirst = bars.findItemLoc('gold_coin', {
+            containerId: 'root',
+            slots: []
+        }, [nestedView, {
+            containerId: 'i9',
+            slots: [{ index: 0, id: 'gold_coin', count: 1 }]
+        }], {});
+        assert.strictEqual(focusedFirst.containerId, 'i5', 'find prefers the first open view (focused)');
+
         persistCtrl.assignSlot(3, { t: 'item', id: 'potion_health', m: 'self' });
         assert.strictEqual(persistCtrl._state.doc.bars[0].slots.find((s) => s.i === 3).id, 'potion_health');
         persistCtrl.assignSlot(4, { t: 'text', text: 'Pulling south' });
@@ -255,6 +290,39 @@ function main() {
         };
         const multiFired = persistCtrl.fireSlot(multi);
         assert.ok(multiFired, 'multi skips CD spell and uses potion');
+
+        const usedSlots = [];
+        persistCtrl.bindHost({
+            prefs: prefs,
+            send: function (op) { sent.push(op); },
+            protocol: {
+                C2S: { CAST: 16, USE_ITEM: 43, EQUIP: 40 },
+                encodeCast: function () { return new Uint8Array(0); },
+                encodeContainerSlot: function (containerId, index) {
+                    usedSlots.push({ containerId: containerId, index: index | 0 });
+                    return new Uint8Array(0);
+                }
+            },
+            getSelf: function () { return self; },
+            getTargetId: function () { return 9; },
+            getOthers: function () { return others; },
+            entityById: function (id) { return id === 9 ? tgt : self; },
+            isDowned: function () { return false; },
+            getBag: function () {
+                return { containerId: 'root', slots: [] };
+            },
+            getOpenBag: function () { return nestedView; },
+            getOpenBags: function () { return [quiverView, nestedView]; },
+            getEquipment: function () { return {}; }
+        });
+        persistCtrl._state.items.simple_arrow = { id: 'simple_arrow', category: 'ammo' };
+        const arrowUse = persistCtrl.fireSlot({ t: 'item', id: 'simple_arrow' });
+        assert.ok(arrowUse, 'item slot fires from a non-focused open BAG');
+        assert.strictEqual(usedSlots[0].containerId, 'i2');
+        assert.strictEqual(usedSlots[0].index, 0);
+        const goldUse = persistCtrl.fireSlot({ t: 'item', id: 'gold_coin' });
+        assert.ok(goldUse);
+        assert.strictEqual(usedSlots[1].containerId, 'i5', 'focused open BAG wins when both have a match');
         console.log('ok action_bars');
     });
 }

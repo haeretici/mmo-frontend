@@ -59,6 +59,10 @@
                         <input class="form-check-input" type="checkbox" id="talk-right" style="cursor: pointer;">
                         <label class="form-check-label label-retro mb-0 ms-1" for="talk-right">Talk on right-click</label>
                     </div>
+                    <div class="form-check form-switch mb-1">
+                        <input class="form-check-input" type="checkbox" id="move-stack" style="cursor: pointer;" title="Off: plain drag opens the amount slider; Ctrl moves the full stack. On: plain drag moves the full stack; Ctrl opens the slider. Shift always moves 1.">
+                        <label class="form-check-label label-retro mb-0 ms-1" for="move-stack">Move stack without dialog</label>
+                    </div>
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" id="auto-chase" style="cursor: pointer;">
                         <label class="form-check-label label-retro mb-0 ms-1" for="auto-chase">Auto Chase</label>
@@ -206,15 +210,12 @@
             <div id="sidebarPanelToggles" class="sidebar-panel-toggles" role="toolbar" aria-label="Open or close sidebar panels">
                 <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleBackpackBtn" data-panel-toggle="backpack" aria-label="Toggle Backpack" title="Toggle Backpack">
                     <i class="fa-solid fa-bag-shopping" aria-hidden="true"></i>
-                    <span class="panel-toggle-label"> Backpack</span>
                 </button>
                 <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleCombatBtn" data-panel-toggle="combat" aria-label="Toggle Combat" title="Toggle Combat">
                     <i class="fa-solid fa-hand-fist" aria-hidden="true"></i>
-                    <span class="panel-toggle-label"> Combat</span>
                 </button>
                 <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleSkillsBtn" data-panel-toggle="skills" aria-label="Toggle Skills" title="Toggle Skills">
                     <i class="fa-solid fa-chart-simple" aria-hidden="true"></i>
-                    <span class="panel-toggle-label"> Skills</span>
                 </button>
             </div>
             <section class="game-backpack-panel panel-collapsible-section play-panel" data-panel-id="backpack" aria-label="Backpack">
@@ -233,7 +234,7 @@
                 </div>
                 <div class="panel-collapsible-content">
                     <div class="backpack-grid-scroll panel-body-scroll" id="backpackScroll">
-                        <div class="backpack-grid" id="backpackGrid" title="Character backpack (20 slots; nested bags open in panels)">
+                        <div class="backpack-grid" id="backpackGrid" title="Character backpack (slot count follows the equipped bag; nested bags open in panels)">
                             <div class="backpack-slot inv-slot" data-slot-index="0" data-container-uid="root"></div>
                             <div class="backpack-slot inv-slot" data-slot-index="1" data-container-uid="root"></div>
                             <div class="backpack-slot inv-slot" data-slot-index="2" data-container-uid="root"></div>
@@ -259,28 +260,6 @@
                 </div>
                 <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
             </section>
-            <section class="game-backpack-panel panel-collapsible-section play-panel" id="openBagPanel" data-panel-id="open-bag" aria-label="Open bag" hidden>
-                <div class="am-sidebar-title-row panel-title-bar">
-                    <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
-                        <div class="d-flex align-items-center gap-1">
-                            <i class="fa-solid fa-chevron-down panel-toggle-icon"></i>
-                            <h2 id="openBagTitle" class="am-sidebar-title mb-0">Bag</h2>
-                            <span id="openBagCount" class="text-muted small ms-1">(0/20)</span>
-                        </div>
-                    </div>
-                    <div class="panel-title-actions">
-                        <button type="button" class="panel-close-btn ghost btn-xs" id="openBagClose" aria-label="Close bag" title="Close bag">
-                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="panel-collapsible-content">
-                    <div class="backpack-grid-scroll panel-body-scroll" id="openBagScroll">
-                        <div class="backpack-grid" id="openBagGrid"></div>
-                    </div>
-                </div>
-                <div class="panel-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Resize panel height" title="Drag to resize height"></div>
-            </section>
             <section class="game-combat-panel panel-collapsible-section play-panel" data-panel-id="combat" aria-label="Combat">
                 <div class="am-sidebar-title-row panel-title-bar">
                     <div class="panel-toggle-header d-flex align-items-center flex-grow-1" role="button" tabindex="0" title="Click to collapse">
@@ -290,7 +269,7 @@
                         </div>
                     </div>
                     <div class="panel-title-actions d-flex align-items-center gap-1">
-                        <div class="combat-sort-container position-relative">
+                        <div class="combat-sort-container">
                             <button type="button" class="btn btn-xs btn-outline-secondary party-details-btn combat-sort-btn" id="combatSortBtn" title="Sort options" aria-label="Sort options">
                                 <i class="fa-solid fa-arrow-down-short-wide"></i>
                             </button>
@@ -356,6 +335,7 @@
     </aside>
     </div>
 </div>
+<div id="inventoryFloatRoot" class="inv-float-root" aria-hidden="true"></div>
 <div id="ctx-menu" class="ctx-menu inv-context-menu" hidden></div>
 <div id="item-popover" class="item-popover" hidden></div>
 <div id="profile-modal" class="modal" hidden>
@@ -372,6 +352,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/protocol.js"></script>
 <script src="/js/mouse_dispatcher.js"></script>
+<script src="/js/inventory_mouse.js"></script>
 <script src="/js/path_walk.js"></script>
 <script src="/js/area_centers.js"></script>
 <script src="/js/keyboard_walk.js"></script>
@@ -384,6 +365,7 @@
 <script src="/js/combat_fx.js"></script>
 <script src="/js/action_bar_assign.js"></script>
 <script src="/js/action_bars.js"></script>
+<script src="/js/float_panel_place.js"></script>
 <script src="/js/play.js"></script>
 </body>
 </html>
