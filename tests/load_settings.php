@@ -23,6 +23,7 @@ assert($committed['gameOrigin'] === 'http://127.0.0.1:8081');
 assert($committed['proxyApi'] === true);
 assert($committed['contentPath'] === '../content');
 assert(in_array('adept', $committed['vocations'], true));
+assert(!in_array('adventurer', $committed['vocations'], true));
 assert(!array_key_exists('mysql', $committed));
 
 $dir = sys_get_temp_dir() . '/fe-settings-' . bin2hex(random_bytes(4));

@@ -191,9 +191,10 @@ final class Router
 
     /**
      * Display/seed class list. MUST NOT include combat formulas.
+     * baseSprite / baseSpriteGenre are watch-mode art ids (creature catalog), not formulas.
      *
      * @param mixed $raw
-     * @return array{classes: list<array{id: string, spells: list<string>}>}
+     * @return array{classes: list<array{id: string, label?: string, spells: list<string>, baseSprite?: string, baseSpriteGenre?: string}>}
      */
     public static function classesUi(mixed $raw): array
     {
@@ -211,7 +212,17 @@ final class Router
                     }
                 }
             }
-            $out['classes'][] = ['id' => $row['id'], 'spells' => $spells];
+            $entry = ['id' => $row['id'], 'spells' => $spells];
+            if (isset($row['label']) && is_string($row['label']) && $row['label'] !== '') {
+                $entry['label'] = $row['label'];
+            }
+            if (isset($row['baseSprite']) && is_string($row['baseSprite']) && $row['baseSprite'] !== '') {
+                $entry['baseSprite'] = $row['baseSprite'];
+            }
+            if (isset($row['baseSpriteGenre']) && is_string($row['baseSpriteGenre']) && $row['baseSpriteGenre'] !== '') {
+                $entry['baseSpriteGenre'] = $row['baseSpriteGenre'];
+            }
+            $out['classes'][] = $entry;
         }
         return $out;
     }

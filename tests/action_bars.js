@@ -3,17 +3,25 @@
 const assert = require('assert');
 const assign = require('../static/js/action_bar_assign.js');
 global.EngineActionBarAssign = assign;
+global.EngineActionBarProfiles = require('../static/js/action_bar_profiles.js');
 const bars = require('../static/js/action_bars.js');
 const prefs = require('../static/js/prefs.js');
 
 function main() {
     assert.strictEqual(bars.VISIBLE_SLOTS, 12);
+    assert.strictEqual(bars.VISIBLE_SLOTS_VERTICAL, 10);
+    assert.strictEqual(bars.MAX_SLOTS, 50);
+    assert.strictEqual(bars.maxPageFor(1), 38);
+    assert.strictEqual(bars.maxPageFor(4), 40);
     assert.strictEqual(bars.BAR1_KEYS[0], 'F1');
     assert.strictEqual(bars.BAR1_KEYS[11], 'F12');
     assert.strictEqual(bars.cdTicks(2, 20), 40);
 
     const seed = bars.seedBar1(['melee_auto', 'distance_auto', 'wand_auto', 'snap_jab', 'fang_clash']);
     assert.strictEqual(seed.bars[0].slots[0].id, 'snap_jab');
+    assert.strictEqual(bars.dockVisibleCount(seed, 'bottom'), 1);
+    assert.strictEqual(bars.dockVisibleCount(seed, 'left'), 0);
+    assert.strictEqual(bars.barShown(seed.bars[0]), true);
     assert.strictEqual(seed.bars[0].slots[0].k, 'F1');
     assert.ok(!seed.bars[0].slots.some((s) => /_auto$/.test(s.id)));
     const mysticList = bars.knownSpellsFor({
@@ -144,7 +152,7 @@ function main() {
     const sent = [];
     const persistCtrl = bars.create();
     persistCtrl._state.classes = {
-        classes: [{ id: 'mystic', spells: ['snap_jab', 'fang_clash', 'melee_auto'] }]
+        classes: [{ id: 'mystic', label: 'Mystic', spells: ['snap_jab', 'fang_clash', 'melee_auto'] }]
     };
     persistCtrl.bindHost({
         prefs: prefs,
@@ -156,25 +164,114 @@ function main() {
         entityById: function (id) { return id === 9 ? tgt : self; },
         isDowned: function () { return false; }
     });
-    return persistCtrl.onEnter({ characterId: 42, vocation: 'mystic' }).then(function () {
+    return persistCtrl.onEnter({ characterId: 42, name: 'Iria', vocation: 'mystic' }).then(function () {
+        assert.strictEqual(persistCtrl._state.profileId, 'Mystic');
+        assert.ok(!Object.prototype.hasOwnProperty.call(persistCtrl._state.profiles, 'Iria'));
         assert.strictEqual(persistCtrl._state.doc.bars[0].slots[0].id, 'snap_jab');
         assert.ok(!sent.includes(17), 'seed does not send SET_HOTKEYS');
         persistCtrl.assignSlot(1, { t: 'spell', id: 'haste', m: 'self' });
         return new Promise(function (resolve) { setTimeout(resolve, bars.SET_DEBOUNCE_MS + 50); });
     }).then(function () {
         assert.ok(!sent.includes(17), 'assign does not send SET_HOTKEYS');
-        return prefs.loadActionBars(42);
+        return prefs.loadActionBarProfiles();
     }).then(function (saved) {
-        assert.strictEqual(saved.bars[0].slots[1].id, 'haste');
+        assert.strictEqual(saved.lastProfileId, 'Mystic');
+        assert.strictEqual(saved.profiles.Mystic.bars[0].slots[1].id, 'haste');
+        assert.ok(!saved.hotkeys);
+        assert.ok(!saved.profiles.Mystic.hotkeys);
+        return prefs.loadActionBars(42);
+    }).then(function (legacy) {
+        assert.strictEqual(legacy, null, 'enter does not write an id-keyed bar doc');
         const relog = bars.create();
         relog._state.classes = persistCtrl._state.classes;
         relog.bindHost({ prefs: prefs });
-        return relog.onEnter({ characterId: 42, vocation: 'mystic' });
+        return relog.onEnter({ characterId: 42, name: 'Iria', vocation: 'mystic' });
     }).then(function () {
-        return prefs.loadActionBars(42);
+        return prefs.loadActionBarProfiles();
     }).then(function (again) {
-        assert.strictEqual(again.bars[0].slots[0].k, 'F1');
-        assert.strictEqual(again.bars[0].slots[1].id, 'haste');
+        assert.strictEqual(again.profiles.Mystic.bars[0].slots[0].k, 'F1');
+        assert.strictEqual(again.profiles.Mystic.bars[0].slots[1].id, 'haste');
+        const bram = bars.create();
+        bram._state.classes = persistCtrl._state.classes;
+        bram.bindHost({ prefs: prefs });
+        return bram.onEnter({ characterId: 43, name: 'Bram', vocation: 'mystic' }).then(function () {
+            assert.strictEqual(bram._state.profileId, 'Mystic');
+            assert.strictEqual(bram._state.doc.bars[0].slots[1].id, 'haste');
+            assert.ok(!Object.prototype.hasOwnProperty.call(bram._state.profiles, 'Bram'));
+            return prefs.saveActionBars(99, {
+                v: 1,
+                bars: [{
+                    id: 1,
+                    side: 'bottom',
+                    visible: true,
+                    locked: false,
+                    page: 0,
+                    slots: [{ i: 0, t: 'spell', id: 'old_spell', k: 'F1', m: 'smart_target' }]
+                }]
+            });
+        }).then(function () {
+            const nia = bars.create();
+            nia._state.classes = persistCtrl._state.classes;
+            nia.bindHost({ prefs: prefs });
+            return nia.onEnter({ characterId: 99, name: 'Nia', vocation: 'mystic' });
+        });
+    }).then(function () {
+        return prefs.loadActionBars(99);
+    }).then(function (oldDoc) {
+        assert.strictEqual(oldDoc.bars[0].slots[0].id, 'old_spell');
+        return prefs.loadActionBarProfiles();
+    }).then(function (map) {
+        map.profiles.Aldric = {
+            v: 1,
+            bars: [{
+                id: 1,
+                side: 'bottom',
+                visible: true,
+                locked: false,
+                page: 0,
+                slots: [{ i: 0, t: 'spell', id: 'haste', k: 'F1', m: 'self' }]
+            }]
+        };
+        map.profiles.Scout = {
+            v: 1,
+            bars: [{
+                id: 1,
+                side: 'bottom',
+                visible: true,
+                locked: false,
+                page: 0,
+                slots: [{ i: 0, t: 'spell', id: 'fang_clash', k: 'F1', m: 'smart_target' }]
+            }]
+        };
+        return prefs.saveActionBarProfiles(map);
+    }).then(function () {
+        const named = bars.create();
+        named._state.classes = {
+            classes: [
+                { id: 'scout', label: 'Scout', spells: ['fang_clash'] },
+                { id: 'mystic', label: 'Mystic', spells: ['snap_jab'] }
+            ]
+        };
+        named.bindHost({ prefs: prefs });
+        return named.onEnter({ characterId: 5, name: 'aldric', vocation: 'scout' });
+    }).then(function () {
+        return prefs.loadActionBarProfiles();
+    }).then(function (namedMap) {
+        assert.strictEqual(namedMap.lastProfileId, 'Aldric');
+        assert.strictEqual(namedMap.profiles.Aldric.bars[0].slots[0].id, 'haste');
+        assert.strictEqual(namedMap.profiles.Scout.bars[0].slots[0].id, 'fang_clash');
+        assert.ok(!Object.prototype.hasOwnProperty.call(namedMap.profiles, 'aldric'));
+        persistCtrl._state.profiles = namedMap.profiles;
+        persistCtrl._state.profileId = 'Mystic';
+        persistCtrl._state.doc = namedMap.profiles.Mystic;
+        assert.strictEqual(persistCtrl.switchProfile('Scout'), true);
+        assert.strictEqual(persistCtrl._state.doc.bars[0].slots[0].id, 'fang_clash');
+        assert.strictEqual(persistCtrl._state.profiles.Mystic.bars[0].slots[1].id, 'haste');
+        assert.strictEqual(persistCtrl.switchProfile('missing'), false);
+        assert.strictEqual(persistCtrl.switchProfile('Mystic'), true);
+        assert.strictEqual(persistCtrl._state.profileId, 'Mystic');
+        assert.strictEqual(persistCtrl._state.doc.bars[0].slots[0].id, 'snap_jab');
+        assert.strictEqual(persistCtrl._state.doc.bars[0].slots[1].id, 'haste');
         persistCtrl._state.spells.snap_jab = { id: 'snap_jab', requiresTarget: true };
         const fired = persistCtrl.fireSlot(persistCtrl._state.doc.bars[0].slots[0]);
         assert.ok(fired);
@@ -250,6 +347,15 @@ function main() {
         const stolen = persistCtrl._state.doc.bars[0].slots.find((s) => s.i === 0);
         assert.strictEqual(stolen.k, '');
         assert.strictEqual(persistCtrl._state.doc.bars[0].slots.find((s) => s.i === 6).k, 'F1');
+        assert.strictEqual(persistCtrl.assignBarSlot(2, 0, { t: 'spell', id: 'haste', k: 'F2' }), true);
+        const bar2 = persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 2);
+        assert.strictEqual(bar2.side, 'bottom');
+        assert.strictEqual(bar2.slots.find((s) => s.i === 0).k, 'F2');
+        const clearedF2 = persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 1).slots.find((s) => s.i === 1);
+        assert.strictEqual(clearedF2.k, '');
+        const f3 = persistCtrl.findHotkeySlot('F3');
+        assert.strictEqual(f3.barId, 1);
+        assert.strictEqual(f3.index, 2);
 
         persistCtrl.setBarLocked(true);
         assert.strictEqual(persistCtrl.assignSlot(7, { t: 'item', id: 'potion_health' }), false);
@@ -323,6 +429,45 @@ function main() {
         const goldUse = persistCtrl.fireSlot({ t: 'item', id: 'gold_coin' });
         assert.ok(goldUse);
         assert.strictEqual(usedSlots[1].containerId, 'i5', 'focused open BAG wins when both have a match');
+
+        assert.strictEqual(persistCtrl.addProfile(''), false);
+        assert.strictEqual(persistCtrl.addProfile('Mystic'), false);
+        assert.strictEqual(persistCtrl.addProfile('Iria'), true);
+        assert.strictEqual(persistCtrl._state.profileId, 'Iria');
+        assert.ok(persistCtrl._state.profiles.Iria);
+        assert.ok(!persistCtrl._state.profiles.Iria.hotkeys);
+        assert.strictEqual(persistCtrl.copyProfile('Aldric Two'), true);
+        assert.strictEqual(persistCtrl._state.profileId, 'Aldric Two');
+        assert.strictEqual(persistCtrl.renameProfile('Aldric'), false);
+        assert.strictEqual(persistCtrl.renameProfile('Nia'), true);
+        assert.strictEqual(persistCtrl._state.profileId, 'Nia');
+        while (Object.keys(persistCtrl._state.profiles).length > 1) {
+            assert.strictEqual(persistCtrl.removeProfile(), true);
+        }
+        assert.strictEqual(persistCtrl.removeProfile(), false);
+        assert.strictEqual(Object.keys(persistCtrl._state.profiles).length, 1);
+        assert.strictEqual(persistCtrl.setDockCount('left', 2), 2);
+        assert.strictEqual(bars.dockVisibleCount(persistCtrl._state.doc, 'left'), 2);
+        const left4 = persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 4);
+        const left6 = persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 6);
+        assert.strictEqual(left4.visible, true);
+        assert.strictEqual(left4.side, 'left');
+        assert.strictEqual(left6.visible, false);
+        assert.strictEqual(persistCtrl.setDockCount('bottom', 0), 0);
+        assert.strictEqual(bars.barShown(persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 1)), false);
+        assert.strictEqual(persistCtrl.setDockCount('bottom', 1), 1);
+        assert.strictEqual(persistCtrl.setBarPage(1, 999), 38);
+        assert.strictEqual(persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 1).page, 38);
+        assert.strictEqual(persistCtrl.setBarPage(4, -4), 0);
+        assert.strictEqual(persistCtrl.assignBarSlot(1, 20, { t: 'spell', id: 'snap_jab', k: 'CTRL+1' }), true);
+        const paged = persistCtrl.findHotkeySlot('CTRL+1');
+        assert.strictEqual(paged.barId, 1);
+        assert.strictEqual(paged.index, 20);
+        assert.strictEqual(persistCtrl.assignBarSlot(7, 0, { t: 'spell', id: 'snap_jab', k: 'CTRL+9' }), true);
+        assert.strictEqual(persistCtrl._state.doc.bars.find((b) => (b.id | 0) === 7).visible, false);
+        const hiddenHk = persistCtrl.findHotkeySlot('CTRL+9');
+        assert.strictEqual(hiddenHk.barId, 7);
+        assert.strictEqual(hiddenHk.index, 0);
         console.log('ok action_bars');
     });
 }

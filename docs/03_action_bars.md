@@ -34,9 +34,9 @@ UX facts come from the reference client (`legacy/client/modules/game_actionbar`,
 | `--cd-progress` | 0–100, rounded to **0.1** |
 | `maxIntentsPerTick` | **5** |
 | `maxWsFrameBytes` | **4096** |
-| Walk keys (blocked) | arrows + WASD |
+| Walk keys (blocked on slots) | general hotkeys. Defaults: arrows + WASD, diagonals empty, Space, Shift+Space, Escape stops autowalk. Bare arrows, WASD, Escape, Tab, and Enter stay blocked on a slot |
 
-`play.html` still has `#actionBarDockTop`. Leave empty. Do not assign slots. Remove in a later chrome pass.
+`play.html` still has `#actionBarDockTop`. Leave empty. Do not assign slots. The live HUD never mounts it.
 
 ## Action types
 
@@ -64,29 +64,46 @@ Spell `requiresTarget` without a target does not fire. `window.cast` stays a deb
 
 ## Persist (client IndexedDB)
 
-Bar JSON is a **user preference**, like mouse mode. The game process never sees it.
+Bar JSON is a **user preference**, like mouse mode. The game process never sees it. General hotkeys are not stored in a profile.
 
 | Store | Where | Key |
 | :--- | :--- | :--- |
-| `actionBars` | IndexedDB `engine.prefs` (not `HuntDLClientDB`) | character id (`ENTER_WORLD` self id) |
+| `actionBars` record `actionBarProfiles` | IndexedDB `engine.prefs` (not `HuntDLClientDB`) | one map for every profile, plus `lastProfileId` |
+| `actionBars` record `generalHotkeys` | same store | one global set for every character and profile. Not inside a profile document |
+| leftover id-keyed rows in `actionBars` | same store | numeric character id. Left on disk. Enter does not read them |
 | leftover SQL `character_state.hotkeys` | MySQL | always `{}` — do not write bars here |
 
-Empty / missing = uninitialized. Omit empty slots. One example:
+The map record:
 
 ```json
-{"v":1,"bars":[{"id":1,"side":"bottom","visible":true,"locked":false,"page":0,"slots":[{"i":0,"k":"F1","t":"spell","id":"snap_jab","m":"smart_target"}]}]}
+{"v":1,"lastProfileId":"Mystic","profiles":{"Mystic":{"v":1,"bars":[{"id":1,"side":"bottom","visible":true,"locked":false,"page":0,"slots":[{"i":0,"k":"F1","t":"spell","id":"snap_jab","m":"smart_target"}]}]}}}
 ```
 
 | Field | Rule |
 | :--- | :--- |
+| profile id | character **name**, or vocation **label** (`Guardian`, `Scout`, …). Compared case-insensitively. Class id (`guardian`) matches the vocation profile as an alias |
+| `lastProfileId` | profile selected most recently. Updated on enter and when the player switches profile |
 | `id` | bar 1–9 |
 | `side` | `bottom` \| `left` \| `right` |
 | `k` | hotkey, normalized `F1` / `SHIFT+1` / `CTRL+1` |
 | `t` | type above |
-| `id` | `spellId` or item catalog id |
+| slot `id` | `spellId` or item catalog id |
 | `m` | target mode; default `smart_target` |
 
-On enter, if missing/`{}`, client **seeds bar 1** from `GET /content/classes-ui.json` `spells` for the vocation, skipping `melee_auto` / `distance_auto` / `wand_auto` and `*_auto`. Mystic slot 0 = `snap_jab`. Writes the seed to IndexedDB. Assign/rearrange debounce-saves the same store. Relog in this browser keeps F1.
+On enter the client picks one profile and renders it:
+
+1. A profile whose id matches the character name.
+2. Else a profile whose id matches the vocation label, or the class id.
+3. Else `lastProfileId` when that profile still exists.
+4. Else one new profile named with the vocation label. Bar 1 is seeded.
+
+A vocation match **uses** that profile. Enter does not copy it under the character name, so characters of that vocation who have no profile of their own share it. A character who already has a profile keeps it, including when their name is the same string as a vocation. Saves write the active profile and `lastProfileId`. The Hotkeys page lists profiles and can add, copy, rename, or remove one. Removing the active profile selects the first one that remains. The last profile cannot be removed. Copy, then rename to a character name, so the next enter for that character takes step 1 of the chain.
+
+The same page edits slots on the bottom (bars 1–3), left (4–6), and right (7–9) docks and sets how many bars each side shows (0–3). There is no top dock. Spell, object, text, multi, and hotkey use the existing assign modals. The live HUD paints every bar with `visible: true` (default: bar 1 only). Each bar keeps 50 logical slots and shows a window of 12 (bottom) or 10 (left/right). First, previous, next, and last arrows move that window; the lock control uses a closed lock and an open lock. A hotkey on a hidden bar still fires when it matches. Cooldown wipe stays on the 100 ms dirty poll. Structure HTML is rewritten only when the slot signature changes. Inventory packets refresh item counts; the walk loop does not.
+
+General hotkeys are a second record, `generalHotkeys`, applied no matter which profile is active. Several keys per action are allowed. A key that is already on a slot shows the assign overwrite warning; confirming clears the slot key. Assigning that key to a slot clears it from the general action. Movement rebinds, including the four diagonals, change keyboard walk. Holding two cardinals combines into one diagonal step (latest key wins on each axis). A diagonal step waits twice the cardinal gap. Toggle Auto Chase has no default key. Stop Autowalk defaults to Escape, which still closes the settings window and the talk dialog.
+
+Empty / missing bar doc seeds bar 1 from `GET /content/classes-ui.json` `spells` for the vocation, skipping `melee_auto` / `distance_auto` / `wand_auto` and `*_auto`. Mystic slot 0 = `snap_jab`. Assign/rearrange debounce-saves the active profile. Relog in this browser keeps F1. Omit empty slots.
 
 `snapshot.js` writes `hotkeys: {}`. No `session.hotkeys`. Do not load SQL hotkeys onto the session.
 
@@ -101,7 +118,7 @@ Fire only. No bar JSON on the socket.
 | `C2S.USE_ITEM` | 43 | bag slot |
 | `C2S.EQUIP` | 40 | bag slot |
 
-C2S **17** and S2C **135** are unused (do not reuse). Opcode numbers in `static/js/protocol.js` **MUST** match `../server/src/protocol/opcodes.js`.
+C2S **17** stays unused. Bar JSON is not on the socket. S2C **135** is `SKILL_PROGRESS` (skill counters, not bars). Opcode numbers in `static/js/protocol.js` **MUST** match `../server/src/protocol/opcodes.js`.
 
 ## Cooldown overlay
 
@@ -124,7 +141,7 @@ Slice 1 may estimate `readyTick = tickIndex + round(sec × ups)` locally after `
 | Route | Fields |
 | :--- | :--- |
 | `GET /content/spells-ui.json` | `id`, `label`, `mana`, `level`, `vocations`, `range`, `requiresTarget`, `selfTarget`, `allowOnSelf`, `kind`, `isMelee`, `shape.type`, `cooldowns`, `customUISprite` |
-| `GET /content/classes-ui.json` | `{ classes: [{ id, spells }] }` only (seed order) |
+| `GET /content/classes-ui.json` | `{ classes: [{ id, spells, label?, baseSprite?, baseSpriteGenre? }] }` seed order. `label` when the class file has one. `baseSprite` is the vocation watch sprite (creature catalog id); `baseSpriteGenre` when that art is not the mode genre |
 
 MUST NOT ship `powerCurve` / `basePower` / `damageAmplitude` / delayed fuse / field damage / class combat formulas on those routes.
 
@@ -137,7 +154,7 @@ Assign: drag from backpack / equipment onto a slot (binds `itemId` only; no spli
 | # | Lands | Check |
 | ---: | :--- | :--- |
 | **1** | Bar 1 visible, 12 slots, F1–F12, client seed, `CAST`/`USE_ITEM`/`EQUIP`, GCD wipe from ticks, IndexedDB round-trip, RMB assign, drag-drop items, text FCT, multi depth 3, lock, item count | mystic F1 `snap_jab`; overlay **40** ticks at 20 UPS; relog in this browser keeps the slot; F1 does not send bar JSON; RMB Assign Spell lists vocation spells |
-| **2** | Bars 2–9 toggle, carousel 50 | second bar Shift/Ctrl keys |
+| **2** | Bars 2–9 toggle, carousel 50 | Settings counts 0–3 per bottom/left/right; arrows move the 50-slot window |
 | later | `passive`, chat-on/off maps, remaining-ticks packet | — |
 
 N1–N7 (consumables, regen, kit) do **not** block slice 1. `window.cast` already tests P12.
@@ -148,13 +165,15 @@ N1–N7 (consumables, regen, kit) do **not** block slice 1. `window.cast` alread
 | :--- | :--- |
 | `static/play.html` | docks `#actionBarDockBottom` / `Left` / `Right` (top unused) |
 | `static/js/play.js` | `window.cast`; docks stay out of this god-file |
-| `static/js/action_bars.js` | Bar 1 docks, fire, CD wipe, persist |
+| `static/js/action_bars.js` | Visible bottom/left/right docks, carousel, fire, CD wipe, persist the active profile |
+| `static/js/action_bar_profiles.js` | `resolveProfile`, add, copy, rename, remove |
+| `static/js/general_hotkeys.js` | global general-hotkey document (not per profile) |
 | `static/js/action_bar_assign.js` | RMB menu + spell/object/text/multi/hotkey modals |
-| `static/js/prefs.js` | IndexedDB `engine.prefs` / `actionBars` |
-| `static/js/protocol.js` | `CAST` 16 / 129. No 17 / 135 |
+| `static/js/prefs.js` | IndexedDB `engine.prefs` / `actionBars` record `actionBarProfiles` |
+| `static/js/protocol.js` | `CAST` 16 / 129. No 17. 135 is `SKILL_PROGRESS` |
 | `static/js/area_centers.js` | Smart tile rank |
 | `php/Router.php` | `spells-ui.json`, `classes-ui.json` |
-| `../server/src/protocol/opcodes.js` | ids; 17 / 135 unused |
+| `../server/src/protocol/opcodes.js` | ids; 17 unused; 135 is `SKILL_PROGRESS` |
 | `../server/src/world/snapshot.js` | `hotkeys: {}` |
 | `../server/src/world/spells.js` | admit `CAST` |
 | `../server/sql/001_init.sql` | leftover `character_state.hotkeys` JSON — unused |
@@ -162,6 +181,6 @@ N1–N7 (consumables, regen, kit) do **not** block slice 1. `window.cast` alread
 ## Remaining
 
 - Slice 1 assign chrome landed (RMB menu, spell catalog filter/sort/targeting, object pick + drag-drop, text FCT, multi depth 3, hotkey capture, lock, item count). No `SET_HOTKEYS` / `HOTKEYS`.
-- Slice 2: bars 2–9 toggle, carousel 50.
+- Slice 2: bottom/left/right counts 0–3, carousel of 50, distinct lock icons. Top dock stays empty.
 - Native RMB menu is already off on `.play-shell`. Do not use the OS menu.
 - Do not copy HuntDL `action_bars.js` / `action_bar_modals.js`.

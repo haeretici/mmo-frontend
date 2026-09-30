@@ -13,8 +13,7 @@
         "scout",
         "mystic",
         "adept",
-        "warden",
-        "adventurer"
+        "warden"
     ],
     "limits": {
         "jsonBodyBytes": 16384,

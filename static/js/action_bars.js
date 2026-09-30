@@ -14,6 +14,7 @@
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     const VISIBLE_SLOTS = 12;
+    const VISIBLE_SLOTS_VERTICAL = 10;
     const MULTI_ACTION_DEPTH = 3;
     const TEXT_FCT_COLOR = '#93c5fd';
     const BAR1_KEYS = Object.freeze([
@@ -268,9 +269,76 @@
     }
 
     function bar1Of(doc) {
+        return barById(doc, 1);
+    }
+
+    function sideOf(barId) {
+        const n = barId | 0;
+        if (n >= 4 && n <= 6) return 'left';
+        if (n >= 7 && n <= 9) return 'right';
+        return 'bottom';
+    }
+
+    function barsForDock(dock) {
+        if (dock === 'left') return [4, 5, 6];
+        if (dock === 'right') return [7, 8, 9];
+        return [1, 2, 3];
+    }
+
+    function visibleCount(barId) {
+        return sideOf(barId) === 'bottom' ? VISIBLE_SLOTS : VISIBLE_SLOTS_VERTICAL;
+    }
+
+    /** Shown on the HUD. Bar 1 stays shown when an older row omitted `visible`. */
+    function barShown(bar) {
+        if (!bar) return false;
+        if (bar.visible === false) return false;
+        if (bar.visible === true) return true;
+        return (bar.id | 0) === 1;
+    }
+
+    function dockVisibleCount(doc, dock) {
+        const ids = barsForDock(dock);
+        let n = 0;
+        for (let i = 0; i < ids.length; i++) {
+            if (barShown(barById(doc, ids[i]))) n += 1;
+        }
+        return n;
+    }
+
+    function maxPageFor(barId) {
+        return Math.max(0, MAX_SLOTS - visibleCount(barId));
+    }
+
+    function clampPage(bar) {
+        if (!bar) return 0;
+        const max = maxPageFor(bar.id | 0);
+        let page = bar.page == null ? 0 : (bar.page | 0);
+        if (page < 0) page = 0;
+        if (page > max) page = max;
+        bar.page = page;
+        return page;
+    }
+
+    function hudKeyOf(doc) {
+        const parts = [];
+        const sides = ['bottom', 'left', 'right'];
+        for (let s = 0; s < sides.length; s++) {
+            const ids = barsForDock(sides[s]);
+            for (let i = 0; i < ids.length; i++) {
+                const bar = barById(doc, ids[i]);
+                if (!barShown(bar)) continue;
+                parts.push(sides[s] + ':' + (bar.id | 0) + ':' + clampPage(bar) + ':' + (bar.locked ? 1 : 0));
+            }
+        }
+        return parts.join(',');
+    }
+
+    function barById(doc, barId) {
         const bars = doc && Array.isArray(doc.bars) ? doc.bars : [];
+        const id = barId | 0;
         for (let i = 0; i < bars.length; i++) {
-            if (bars[i] && (bars[i].id | 0) === 1) return bars[i];
+            if (bars[i] && (bars[i].id | 0) === id) return bars[i];
         }
         return null;
     }
@@ -460,7 +528,11 @@
             classes: { classes: [] },
             catalogs: null,
             characterId: null,
+            characterName: '',
             vocation: '',
+            profileId: '',
+            profiles: {},
+            editor: { dock: 'bottom', barId: 1, slot: 0 },
             buckets: Object.create(null),
             bucketDur: Object.create(null),
             lastTick: 0,
@@ -470,6 +542,7 @@
             prompt: null,
             pollTimer: 0,
             slotNodes: [],
+            hudKey: null,
             anyOnCooldown: false,
             bound: false,
             visibilityBound: false
@@ -505,9 +578,35 @@
             return 0;
         }
 
-        function dock() {
-            if (typeof document === 'undefined') return null;
-            return document.getElementById('actionBarDockBottom');
+        function dockEl(side) {
+            if (typeof document === 'undefined' || !document.getElementById) return null;
+            if (side === 'left') return document.getElementById('actionBarDockLeft');
+            if (side === 'right') return document.getElementById('actionBarDockRight');
+            if (side === 'bottom') return document.getElementById('actionBarDockBottom');
+            return null;
+        }
+
+        function elBarId(el) {
+            if (!el || typeof el.getAttribute !== 'function') return 1;
+            const raw = el.getAttribute('data-bar-id');
+            if (raw == null || raw === '') {
+                const host = el.closest ? el.closest('[data-bar-id]') : null;
+                if (!host || typeof host.getAttribute !== 'function') return 1;
+                return (host.getAttribute('data-bar-id') | 0) || 1;
+            }
+            return (raw | 0) || 1;
+        }
+
+        function elSlotIndex(el, fallback) {
+            if (!el || typeof el.getAttribute !== 'function') return fallback | 0;
+            const raw = el.getAttribute('data-slot');
+            if (raw == null || raw === '') return fallback | 0;
+            return raw | 0;
+        }
+
+        function fallbackKey(barId, index) {
+            if ((barId | 0) === 1 && (index | 0) < BAR1_KEYS.length) return defaultKey(index);
+            return '';
         }
 
         function spriteUrl(kind, id) {
@@ -553,16 +652,57 @@
             };
         }
 
-        function paintSlot(el, slot, i) {
+        function slotStructSig(index, slot, paint, key, count) {
+            return [
+                index | 0,
+                key || '',
+                slot && slot.t ? slot.t : '',
+                paint.t || '',
+                paint.id || '',
+                paint.text || '',
+                count
+            ].join('\n');
+        }
+
+        function itemCountOf(id) {
+            return countItemId(
+                id,
+                state.host && state.host.getBag && state.host.getBag(),
+                hostOpenBagViews(state.host),
+                state.host && state.host.getEquipment && state.host.getEquipment()
+            );
+        }
+
+        /**
+         * Rewrite a slot's icon/badge only when its structure signature changes.
+         * Cooldown ticks pass recount:false so a walk-time poll never walks bags.
+         */
+        function paintSlot(el, slot, index, hotkey, opts) {
+            if (!el || typeof el.setAttribute !== 'function' || typeof document === 'undefined') return;
+            const recount = !opts || opts.recount !== false;
             const filled = slotFilled(slot);
             const paint = paintKind(slot);
+            let count = el._abCount || 0;
+            if (filled && paint.t === 'item' && paint.id) {
+                if (recount) {
+                    count = itemCountOf(paint.id);
+                    el._abCount = count;
+                }
+            } else {
+                count = 0;
+                el._abCount = 0;
+            }
+            const key = hotkey || '';
+            const sig = slotStructSig(index, slot, paint, key, count);
+            if (el._abStruct === sig && el._abOverlay) return;
+            el._abStruct = sig;
+            el._abSig = '';
             el.className = 'action-bar-slot'
                 + (filled ? '' : ' action-bar-slot--empty')
                 + (slot && slot.t === 'multi' ? ' action-bar-slot--multi' : '');
-            el.setAttribute('data-slot', String(i));
+            el.setAttribute('data-slot', String(index));
             el.setAttribute('role', 'button');
             el.setAttribute('tabindex', '0');
-            const key = keyOfSlot(i, slot);
             if (key) el.setAttribute('data-hotkey', key);
             else el.removeAttribute('data-hotkey');
             const titleCore = filled
@@ -571,7 +711,7 @@
                     : labelOf(paint.t, paint.id, paint.text))
                 : 'Empty';
             el.title = titleCore + (key ? ' (' + key + ')' : '');
-            el.innerHTML = '';
+            el.textContent = '';
             if (key) {
                 const badge = document.createElement('span');
                 badge.className = 'slot-hotkey-badge';
@@ -595,12 +735,6 @@
                 el.appendChild(img);
             }
             if (filled && paint.t === 'item' && paint.id) {
-                const count = countItemId(
-                    paint.id,
-                    state.host && state.host.getBag && state.host.getBag(),
-                    hostOpenBagViews(state.host),
-                    state.host && state.host.getEquipment && state.host.getEquipment()
-                );
                 const cbadge = document.createElement('span');
                 cbadge.className = 'slot-count-badge';
                 cbadge.textContent = count > 999 ? '999+' : String(count);
@@ -615,73 +749,192 @@
             el.appendChild(overlay);
             el._abOverlay = overlay;
             el._abTimer = timer;
-            el._abSig = '';
+        }
+
+        function faIcon(className) {
+            const icon = document.createElement('i');
+            icon.className = className;
+            icon.setAttribute('aria-hidden', 'true');
+            return icon;
+        }
+
+        function navButton(label, iconClass, disabled, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'action-bar-nav-btn';
+            btn.title = label;
+            btn.disabled = !!disabled;
+            btn.setAttribute('aria-label', label);
+            btn.appendChild(faIcon(iconClass));
+            btn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (btn.disabled) return;
+                onClick();
+            });
+            return btn;
+        }
+
+        function mountBar(bar) {
+            const id = bar.id | 0;
+            const vertical = sideOf(id) !== 'bottom';
+            const page = clampPage(bar);
+            const cap = visibleCount(id);
+            const max = maxPageFor(id);
+            const locked = !!bar.locked;
+            const barEl = document.createElement('div');
+            barEl.className = 'action-bar action-bar--' + (vertical ? 'vertical' : 'horizontal')
+                + (locked ? ' action-bar--locked' : '');
+            barEl.setAttribute('data-bar-id', String(id));
+            barEl.setAttribute('data-page', String(page));
+            barEl.setAttribute('data-locked', locked ? '1' : '0');
+
+            const tools = document.createElement('div');
+            tools.className = 'action-bar-tools';
+            const lockBtn = document.createElement('button');
+            lockBtn.type = 'button';
+            lockBtn.className = 'action-bar-nav-btn action-bar-lock-btn' + (locked ? ' is-locked' : '');
+            const lockLabel = locked ? 'Unlock bar' : 'Lock bar';
+            lockBtn.title = lockLabel;
+            lockBtn.setAttribute('aria-label', lockLabel);
+            lockBtn.setAttribute('aria-pressed', locked ? 'true' : 'false');
+            lockBtn.appendChild(faIcon(locked ? 'fa-solid fa-lock' : 'fa-solid fa-lock-open'));
+            lockBtn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                setBarLocked(!isBarLocked(id), id);
+            });
+            tools.appendChild(lockBtn);
+            barEl.appendChild(tools);
+
+            const startNav = document.createElement('div');
+            startNav.className = 'action-bar-nav action-bar-nav--start';
+            startNav.appendChild(navButton(
+                'First slots',
+                vertical ? 'fa-solid fa-angles-up' : 'fa-solid fa-angles-left',
+                page <= 0,
+                function () { setBarPage(id, 0); }
+            ));
+            startNav.appendChild(navButton(
+                'Previous slots',
+                vertical ? 'fa-solid fa-angle-up' : 'fa-solid fa-angle-left',
+                page <= 0,
+                function () { setBarPage(id, page - 1); }
+            ));
+            barEl.appendChild(startNav);
+
+            const slotsEl = document.createElement('div');
+            slotsEl.className = 'action-bar-slots';
+            for (let n = 0; n < cap; n++) {
+                const index = page + n;
+                const btn = document.createElement('div');
+                btn.className = 'action-bar-slot action-bar-slot--empty';
+                btn.setAttribute('data-slot', String(index));
+                btn.setAttribute('data-bar-id', String(id));
+                btn.setAttribute('role', 'button');
+                btn.setAttribute('tabindex', '0');
+                btn.addEventListener('click', onSlotClick);
+                btn.addEventListener('keydown', onSlotKey);
+                btn.addEventListener('contextmenu', onSlotContext);
+                btn.addEventListener('dragover', onDragOver);
+                btn.addEventListener('dragleave', onDragLeave);
+                btn.addEventListener('drop', onDrop);
+                slotsEl.appendChild(btn);
+            }
+            barEl.appendChild(slotsEl);
+
+            const endNav = document.createElement('div');
+            endNav.className = 'action-bar-nav action-bar-nav--end';
+            endNav.appendChild(navButton(
+                'Next slots',
+                vertical ? 'fa-solid fa-angle-down' : 'fa-solid fa-angle-right',
+                page >= max,
+                function () { setBarPage(id, page + 1); }
+            ));
+            endNav.appendChild(navButton(
+                'Last slots',
+                vertical ? 'fa-solid fa-angles-down' : 'fa-solid fa-angles-right',
+                page >= max,
+                function () { setBarPage(id, max); }
+            ));
+            barEl.appendChild(endNav);
+
+            barEl.addEventListener('wheel', function (ev) {
+                if (max <= 0) return;
+                const dx = ev.deltaX || 0;
+                const dy = ev.deltaY || 0;
+                const raw = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+                if (!raw) return;
+                ev.preventDefault();
+                setBarPage(id, page + (raw > 0 ? 1 : -1));
+            }, { passive: false });
+            return barEl;
+        }
+
+        function mountDocks(key) {
+            const sides = ['bottom', 'left', 'right'];
+            for (let s = 0; s < sides.length; s++) {
+                const el = dockEl(sides[s]);
+                if (!el) continue;
+                el.textContent = '';
+                if (typeof el.setAttribute === 'function') el.setAttribute('data-hud', key);
+                const ids = barsForDock(sides[s]);
+                for (let i = 0; i < ids.length; i++) {
+                    const bar = barById(state.doc, ids[i]);
+                    if (!barShown(bar)) continue;
+                    el.appendChild(mountBar(bar));
+                }
+            }
+        }
+
+        function docksReady() {
+            return !!(dockEl('bottom') || dockEl('left') || dockEl('right'));
+        }
+
+        function hudMounted(key) {
+            const sides = ['bottom', 'left', 'right'];
+            let seen = false;
+            for (let s = 0; s < sides.length; s++) {
+                const el = dockEl(sides[s]);
+                if (!el) continue;
+                seen = true;
+                if (typeof el.getAttribute !== 'function' || el.getAttribute('data-hud') !== key) return false;
+            }
+            return seen;
+        }
+
+        function paintVisible(recount) {
+            state.slotNodes = [];
+            if (typeof document === 'undefined' || !document.querySelectorAll) return;
+            const nodes = document.querySelectorAll('.action-bar-dock .action-bar-slot');
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                const barId = elBarId(el);
+                const index = elSlotIndex(el, i);
+                const bar = barById(state.doc, barId);
+                const map = slotMap(bar);
+                paintSlot(el, map[index] || null, index, keyOnBar(bar, index), { recount: recount !== false });
+                state.slotNodes.push(el);
+            }
         }
 
         function render() {
-            const el = dock();
-            if (!el) return;
-            let barEl = el.querySelector('.action-bar[data-bar-id="1"]');
-            if (barEl && !barEl.querySelector('.action-bar-lock-btn')) {
-                el.textContent = '';
-                barEl = null;
+            syncSlotEditor();
+            if (!docksReady()) return;
+            const key = hudKeyOf(state.doc);
+            if (!hudMounted(key)) mountDocks(key);
+            state.hudKey = key;
+            paintVisible(true);
+            paintCooldowns();
+        }
+
+        function refreshSlots() {
+            if (!docksReady()) return;
+            if (state.hudKey == null || !hudMounted(hudKeyOf(state.doc))) {
+                render();
+                return;
             }
-            const bar = bar1Of(state.doc);
-            const locked = !!(bar && bar.locked);
-            if (!barEl) {
-                el.textContent = '';
-                barEl = document.createElement('div');
-                barEl.className = 'action-bar action-bar--horizontal';
-                barEl.setAttribute('data-bar-id', '1');
-                const tools = document.createElement('div');
-                tools.className = 'action-bar-tools';
-                const lockBtn = document.createElement('button');
-                lockBtn.type = 'button';
-                lockBtn.className = 'action-bar-lock-btn';
-                lockBtn.setAttribute('aria-label', 'Lock bar');
-                lockBtn.title = 'Lock bar';
-                lockBtn.textContent = '🔒';
-                lockBtn.addEventListener('click', function (ev) {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    setBarLocked(!isBarLocked());
-                });
-                tools.appendChild(lockBtn);
-                barEl.appendChild(tools);
-                const slotsEl = document.createElement('div');
-                slotsEl.className = 'action-bar-slots';
-                for (let i = 0; i < VISIBLE_SLOTS; i++) {
-                    const btn = document.createElement('div');
-                    btn.className = 'action-bar-slot action-bar-slot--empty';
-                    btn.setAttribute('data-slot', String(i));
-                    btn.setAttribute('role', 'button');
-                    btn.setAttribute('tabindex', '0');
-                    btn.addEventListener('click', onSlotClick);
-                    btn.addEventListener('keydown', onSlotKey);
-                    btn.addEventListener('contextmenu', onSlotContext);
-                    btn.addEventListener('dragover', onDragOver);
-                    btn.addEventListener('dragleave', onDragLeave);
-                    btn.addEventListener('drop', onDrop);
-                    slotsEl.appendChild(btn);
-                }
-                barEl.appendChild(slotsEl);
-                el.appendChild(barEl);
-            }
-            barEl.classList.toggle('action-bar--locked', locked);
-            const lockBtn = barEl.querySelector('.action-bar-lock-btn');
-            if (lockBtn) {
-                lockBtn.classList.toggle('is-locked', locked);
-                lockBtn.title = locked ? 'Unlock bar' : 'Lock bar';
-                lockBtn.setAttribute('aria-label', locked ? 'Unlock bar' : 'Lock bar');
-                lockBtn.textContent = locked ? '🔒' : '🔓';
-            }
-            const map = slotMap(bar);
-            const nodes = barEl.querySelectorAll('.action-bar-slot');
-            state.slotNodes = [];
-            for (let i = 0; i < nodes.length && i < VISIBLE_SLOTS; i++) {
-                paintSlot(nodes[i], map[i] || null, i);
-                state.slotNodes.push(nodes[i]);
-            }
+            paintVisible(true);
             paintCooldowns();
         }
 
@@ -719,14 +972,16 @@
         function paintCooldowns() {
             const nodes = state.slotNodes;
             if (!nodes || !nodes.length) return;
-            const bar = bar1Of(state.doc);
-            const map = slotMap(bar);
             const tick = clockTick();
             const ups = state.ups || 20;
             let any = false;
             for (let i = 0; i < nodes.length; i++) {
                 const el = nodes[i];
-                const slot = map[i] || null;
+                const barId = elBarId(el);
+                const index = elSlotIndex(el, i);
+                const bar = barById(state.doc, barId);
+                const map = slotMap(bar);
+                const slot = map[index] || null;
                 const cd = slotReady(slot, tick);
                 const on = cd.remaining > 0;
                 if (on) any = true;
@@ -942,36 +1197,54 @@
             return false;
         }
 
-        function slotAt(index) {
-            const bar = bar1Of(state.doc);
+        function slotAtBar(barId, index) {
+            const bar = barById(state.doc, barId);
             const map = slotMap(bar);
             return map[index | 0] || null;
         }
 
         function onSlotClick(ev) {
             ev.preventDefault();
-            const i = ev.currentTarget.getAttribute('data-slot') | 0;
-            fireSlot(slotAt(i));
+            const el = ev.currentTarget;
+            fireSlot(slotAtBar(elBarId(el), elSlotIndex(el, 0)));
         }
 
         function onSlotKey(ev) {
             if (ev.key !== 'Enter' && ev.key !== ' ') return;
             ev.preventDefault();
-            const i = ev.currentTarget.getAttribute('data-slot') | 0;
-            fireSlot(slotAt(i));
+            const el = ev.currentTarget;
+            fireSlot(slotAtBar(elBarId(el), elSlotIndex(el, 0)));
         }
 
-        function modalDeps() {
+        let generalBridge = null;
+
+        function setGeneralBridge(bridge) {
+            generalBridge = bridge || null;
+        }
+
+        function modalDeps(barId) {
+            const id = barId == null ? 1 : (barId | 0);
             return {
-                assignSlot: assignSlot,
-                checkHotkeyConflict: checkHotkeyConflict,
+                assignSlot: function (index, spec) { return assignBarSlot(id, index, spec); },
+                checkHotkeyConflict: function (hotkey, excludeIndex) {
+                    return checkHotkeyConflict(hotkey, excludeIndex, id);
+                },
                 normalizeHotkey: normalizeHotkey,
                 getSpellBook: function () { return state.spells; },
                 getVocation: function () { return state.vocation; },
-                isBarLocked: isBarLocked,
-                setBarLocked: setBarLocked,
-                resolveUiSpriteUrl: function (id) {
-                    return spriteUrl('spell', id);
+                isBarLocked: function () { return isBarLocked(id); },
+                setBarLocked: function (locked) { return setBarLocked(locked, id); },
+                generalHotkeyLabel: function (hotkey) {
+                    if (!generalBridge || typeof generalBridge.labelFor !== 'function') return '';
+                    return generalBridge.labelFor(hotkey) || '';
+                },
+                releaseGeneralHotkey: function (hotkey) {
+                    if (generalBridge && typeof generalBridge.release === 'function') {
+                        generalBridge.release(hotkey);
+                    }
+                },
+                resolveUiSpriteUrl: function (spellId) {
+                    return spriteUrl('spell', spellId);
                 }
             };
         }
@@ -981,28 +1254,25 @@
             ev.stopPropagation();
             const Assign = assignApi();
             if (!Assign || typeof Assign.showSlotContextMenu !== 'function') return;
-            const i = ev.currentTarget.getAttribute('data-slot') | 0;
-            const existing = slotAt(i) || { i: i, k: defaultKey(i) };
-            const slot = Object.assign({ i: i }, existing, { i: i });
-            Assign.showSlotContextMenu(ev.clientX, ev.clientY, slot, modalDeps());
+            const el = ev.currentTarget;
+            const barId = elBarId(el);
+            const i = elSlotIndex(el, 0);
+            const existing = slotAtBar(barId, i);
+            const slot = Object.assign({ i: i }, existing || {}, { i: i });
+            if (!Object.prototype.hasOwnProperty.call(existing || {}, 'k')) slot.k = fallbackKey(barId, i);
+            Assign.showSlotContextMenu(ev.clientX, ev.clientY, slot, modalDeps(barId));
         }
 
-        function isBarLocked() {
-            const bar = bar1Of(state.doc);
+        function isBarLocked(barId) {
+            const id = barId == null ? 1 : (barId | 0);
+            const bar = barById(state.doc, id);
             return !!(bar && bar.locked);
         }
 
-        function setBarLocked(locked) {
-            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : {
-                v: 1,
-                bars: [{ id: 1, side: 'bottom', visible: true, locked: false, page: 0, slots: [] }]
-            };
-            let bar = bar1Of(doc);
-            if (!bar) {
-                bar = { id: 1, side: 'bottom', visible: true, locked: false, page: 0, slots: [] };
-                doc.bars = doc.bars || [];
-                doc.bars.push(bar);
-            }
+        function setBarLocked(locked, barId) {
+            const id = barId == null ? 1 : (barId | 0);
+            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : { v: 1, bars: [] };
+            const bar = ensureBar(doc, id);
             bar.locked = !!locked;
             state.doc = doc;
             render();
@@ -1010,20 +1280,47 @@
             return true;
         }
 
-        function checkHotkeyConflict(hotkey, excludeIndex) {
+        function setBarPage(barId, page) {
+            const id = (barId | 0) || 1;
+            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : { v: 1, bars: [] };
+            const bar = ensureBar(doc, id);
+            bar.page = page | 0;
+            const clamped = clampPage(bar);
+            state.doc = doc;
+            render();
+            queueSave();
+            return clamped;
+        }
+
+        function setDockCount(dock, count) {
+            const side = dock === 'left' || dock === 'right' ? dock : 'bottom';
+            let n = count | 0;
+            if (n < 0) n = 0;
+            if (n > 3) n = 3;
+            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : { v: 1, bars: [] };
+            const ids = barsForDock(side);
+            for (let i = 0; i < ids.length; i++) {
+                const bar = ensureBar(doc, ids[i]);
+                bar.visible = i < n;
+            }
+            state.doc = doc;
+            render();
+            queueSave();
+            return n;
+        }
+
+        function checkHotkeyConflict(hotkey, excludeIndex, excludeBarId) {
             const n = normalizeHotkey(hotkey);
             if (!n) return null;
-            const bar = bar1Of(state.doc);
-            const map = slotMap(bar);
-            for (let i = 0; i < VISIBLE_SLOTS; i++) {
-                if ((i | 0) === (excludeIndex | 0)) continue;
-                if (keyOfSlot(i, map[i] || null) === n) return i;
-            }
-            return null;
+            const skipBar = excludeBarId == null ? 1 : (excludeBarId | 0);
+            const hit = findHotkeySlot(n);
+            if (!hit) return null;
+            if ((hit.barId | 0) === skipBar && (hit.index | 0) === (excludeIndex | 0)) return null;
+            return hit.index;
         }
 
         function onDragOver(ev) {
-            if (isBarLocked()) {
+            if (isBarLocked(elBarId(ev.currentTarget))) {
                 if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';
                 return;
             }
@@ -1040,30 +1337,32 @@
             if (!element || !itemId || !element.closest) return false;
             const slotEl = element.closest('.action-bar-slot');
             if (!slotEl) return false;
-            if (isBarLocked()) return false;
-            const i = slotEl.getAttribute('data-slot') | 0;
-            const existing = slotAt(i);
-            return assignSlot(i, {
+            const barId = elBarId(slotEl);
+            if (isBarLocked(barId)) return false;
+            const i = elSlotIndex(slotEl, 0);
+            const existing = slotAtBar(barId, i);
+            return assignBarSlot(barId, i, {
                 t: 'item',
                 id: String(itemId),
                 m: (existing && existing.m) || 'smart_target',
                 k: existing && Object.prototype.hasOwnProperty.call(existing, 'k')
                     ? existing.k
-                    : defaultKey(i)
+                    : fallbackKey(barId, i)
             });
         }
 
         function onDrop(ev) {
             ev.preventDefault();
             ev.currentTarget.classList.remove('drag-over');
-            if (isBarLocked()) return;
+            if (isBarLocked(elBarId(ev.currentTarget))) return;
             const raw = ev.dataTransfer ? (ev.dataTransfer.getData('text/plain') || '') : '';
             const id = parseDropItemId(raw);
             if (!id) return;
             tryHandleSlotDrop(ev.currentTarget, id);
         }
 
-        function persistableSlot(index, spec, prev) {
+        function persistableSlot(index, spec, prev, barId) {
+            const fallback = (barId | 0) === 1 ? defaultKey(index) : '';
             const t = spec && spec.t ? String(spec.t) : '';
             const next = { i: index };
             if (spec && Object.prototype.hasOwnProperty.call(spec, 'k')) {
@@ -1071,10 +1370,10 @@
             } else if (prev && Object.prototype.hasOwnProperty.call(prev, 'k')) {
                 next.k = normalizeHotkey(prev.k);
             } else {
-                next.k = defaultKey(index);
+                next.k = fallback;
             }
             if (t === 'spell' || t === 'item') {
-                if (!spec.id) return next.k !== defaultKey(index) ? next : null;
+                if (!spec.id) return next.k !== fallback ? next : null;
                 next.t = t;
                 next.id = String(spec.id);
                 next.m = normalizeTargetMode(spec.m || (prev && prev.m));
@@ -1082,7 +1381,7 @@
             }
             if (t === 'text') {
                 const text = spec.text != null ? String(spec.text) : '';
-                if (!text.trim()) return next.k !== defaultKey(index) ? next : null;
+                if (!text.trim()) return next.k !== fallback ? next : null;
                 next.t = 'text';
                 next.text = text;
                 return next;
@@ -1096,46 +1395,150 @@
                     if (s.t === 'item' && s.id) any = true;
                     if (s.t === 'text' && s.text && String(s.text).trim()) any = true;
                 }
-                if (!any) return next.k !== defaultKey(index) ? next : null;
+                if (!any) return next.k !== fallback ? next : null;
                 next.t = 'multi';
                 next.multi = multi;
                 return next;
             }
-            return next.k !== defaultKey(index) ? next : null;
+            return next.k !== fallback ? next : null;
         }
 
-        function assignSlot(index, spec) {
-            if (isBarLocked()) return false;
-            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : {
-                v: 1,
-                bars: [{ id: 1, side: 'bottom', visible: true, locked: false, page: 0, slots: [] }]
+        function ensureBar(doc, barId) {
+            const id = (barId | 0) || 1;
+            let bar = barById(doc, id);
+            if (bar) return bar;
+            bar = {
+                id: id,
+                side: sideOf(id),
+                visible: id === 1,
+                locked: false,
+                page: 0,
+                slots: []
             };
-            let bar = bar1Of(doc);
-            if (!bar) {
-                bar = { id: 1, side: 'bottom', visible: true, locked: false, page: 0, slots: [] };
-                doc.bars = doc.bars || [];
-                doc.bars.push(bar);
+            doc.bars = doc.bars || [];
+            doc.bars.push(bar);
+            return bar;
+        }
+
+        function keyOnBar(bar, index) {
+            if (!bar) return '';
+            const map = slotMap(bar);
+            const slot = map[index] || null;
+            if ((bar.id | 0) === 1) return keyOfSlot(index, slot);
+            if (slot && Object.prototype.hasOwnProperty.call(slot, 'k')) return normalizeHotkey(slot.k);
+            return '';
+        }
+
+        function clearHotkeyEverywhere(doc, hotkey, exceptBarId, exceptIndex) {
+            const n = normalizeHotkey(hotkey);
+            if (!n || !doc) return;
+            const bars = Array.isArray(doc.bars) ? doc.bars : [];
+            for (let b = 0; b < bars.length; b++) {
+                const bar = bars[b];
+                if (!bar) continue;
+                const id = bar.id | 0;
+                if (!Array.isArray(bar.slots)) bar.slots = [];
+                if (id === 1) {
+                    for (let i = 0; i < MAX_SLOTS; i++) {
+                        if (id === (exceptBarId | 0) && i === (exceptIndex | 0)) continue;
+                        if (keyOnBar(bar, i) !== n) continue;
+                        let slot = null;
+                        for (let s = 0; s < bar.slots.length; s++) {
+                            if (bar.slots[s] && (bar.slots[s].i | 0) === i) {
+                                slot = bar.slots[s];
+                                break;
+                            }
+                        }
+                        if (slot) slot.k = '';
+                        else bar.slots.push({ i: i, k: '' });
+                    }
+                    continue;
+                }
+                for (let s = 0; s < bar.slots.length; s++) {
+                    const slot = bar.slots[s];
+                    if (!slot) continue;
+                    if (id === (exceptBarId | 0) && (slot.i | 0) === (exceptIndex | 0)) continue;
+                    if (normalizeHotkey(slot.k) === n) slot.k = '';
+                }
             }
+        }
+
+        function assignBarSlot(barId, index, spec) {
+            const id = (barId | 0) || 1;
+            if (isBarLocked(id)) return false;
+            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : { v: 1, bars: [] };
+            const bar = ensureBar(doc, id);
             const prevMap = slotMap(bar);
-            const prev = prevMap[index] || null;
-            const next = persistableSlot(index, spec || {}, prev);
+            const prev = prevMap[index] ? JSON.parse(JSON.stringify(prevMap[index])) : null;
+            const next = persistableSlot(index, spec || {}, prev, id);
             const wantKey = next && next.k ? normalizeHotkey(next.k) : '';
+            if (wantKey) clearHotkeyEverywhere(doc, wantKey, id, index);
             const slots = [];
             const raw = Array.isArray(bar.slots) ? bar.slots : [];
             for (let i = 0; i < raw.length; i++) {
                 const s = raw[i];
                 if (!s || (s.i | 0) === (index | 0)) continue;
-                if (wantKey && normalizeHotkey(s.k) === wantKey) {
-                    const stolen = Object.assign({}, s);
-                    stolen.k = '';
-                    if (slotFilled(stolen) || stolen.k) slots.push(stolen);
-                    continue;
-                }
                 slots.push(s);
             }
             if (next) slots.push(next);
             slots.sort(function (a, b) { return (a.i | 0) - (b.i | 0); });
             bar.slots = slots;
+            state.doc = doc;
+            render();
+            queueSave();
+            return true;
+        }
+
+        function assignSlot(index, spec) {
+            return assignBarSlot(1, index, spec);
+        }
+
+        function findHotkeySlot(hotkey) {
+            const n = normalizeHotkey(hotkey);
+            if (!n || !state.doc) return null;
+            const bars = Array.isArray(state.doc.bars) ? state.doc.bars : [];
+            const ordered = [];
+            for (let i = 0; i < bars.length; i++) {
+                if (bars[i] && (bars[i].id | 0) === 1) ordered.push(bars[i]);
+            }
+            for (let i = 0; i < bars.length; i++) {
+                if (bars[i] && (bars[i].id | 0) !== 1) ordered.push(bars[i]);
+            }
+            for (let b = 0; b < ordered.length; b++) {
+                const bar = ordered[b];
+                const id = bar.id | 0;
+                if (id === 1) {
+                    for (let i = 0; i < MAX_SLOTS; i++) {
+                        if (keyOnBar(bar, i) === n) return { barId: 1, index: i };
+                    }
+                    continue;
+                }
+                const map = slotMap(bar);
+                const indexes = Object.keys(map);
+                for (let i = 0; i < indexes.length; i++) {
+                    const index = indexes[i] | 0;
+                    if (keyOnBar(bar, index) === n) return { barId: id, index: index };
+                }
+            }
+            return null;
+        }
+
+        function clearSlotHotkey(barId, index) {
+            const id = (barId | 0) || 1;
+            const doc = state.doc && state.doc.v ? JSON.parse(JSON.stringify(state.doc)) : { v: 1, bars: [] };
+            const bar = ensureBar(doc, id);
+            const at = index | 0;
+            if (keyOnBar(bar, at)) {
+                let slot = null;
+                for (let s = 0; s < bar.slots.length; s++) {
+                    if (bar.slots[s] && (bar.slots[s].i | 0) === at) {
+                        slot = bar.slots[s];
+                        break;
+                    }
+                }
+                if (slot) slot.k = '';
+                else if (id === 1) bar.slots.push({ i: at, k: '' });
+            }
             state.doc = doc;
             render();
             queueSave();
@@ -1148,11 +1551,237 @@
             return null;
         }
 
+        function profilesApi() {
+            if (typeof EngineActionBarProfiles !== 'undefined') return EngineActionBarProfiles;
+            return null;
+        }
+
+        function cloneDoc(doc) {
+            if (!doc || typeof doc !== 'object') return emptyDoc();
+            return JSON.parse(JSON.stringify(doc));
+        }
+
         function persistNow() {
             const api = prefsApi();
-            if (!api || typeof api.saveActionBars !== 'function') return;
-            if (state.characterId == null || state.characterId === '') return;
-            api.saveActionBars(state.characterId, state.doc);
+            if (!api || typeof api.saveActionBarProfiles !== 'function') return;
+            if (!state.profileId) return;
+            if (!state.profiles || typeof state.profiles !== 'object') state.profiles = {};
+            state.profiles[state.profileId] = state.doc;
+            api.saveActionBarProfiles({
+                v: 1,
+                lastProfileId: state.profileId,
+                profiles: state.profiles
+            });
+        }
+
+        function syncProfileSelect() {
+            const ui = (typeof EngineClientWindow !== 'undefined') ? EngineClientWindow : null;
+            const win = ui && typeof ui.attached === 'function' ? ui.attached() : null;
+            if (!win || typeof win.setProfiles !== 'function') return;
+            const ids = state.profiles && typeof state.profiles === 'object'
+                ? Object.keys(state.profiles)
+                : [];
+            win.setProfiles({
+                ids: ids,
+                activeId: state.profileId || '',
+                onChange: function (nextId) { switchProfile(nextId); },
+                onAdd: function (name) { return addProfile(name); },
+                onCopy: function (name) { return copyProfile(name); },
+                onRename: function (name) { return renameProfile(name); },
+                onRemove: function () { return removeProfile(); }
+            });
+        }
+
+        function currentMap() {
+            const next = {};
+            const src = state.profiles && typeof state.profiles === 'object' ? state.profiles : {};
+            const keys = Object.keys(src);
+            for (let i = 0; i < keys.length; i++) {
+                next[keys[i]] = keys[i] === state.profileId ? cloneDoc(state.doc) : cloneDoc(src[keys[i]]);
+            }
+            if (state.profileId && !next[state.profileId]) next[state.profileId] = cloneDoc(state.doc);
+            return next;
+        }
+
+        function adoptProfileMap(profiles, id) {
+            state.profiles = profiles || {};
+            const key = id && state.profiles[id] ? id : '';
+            state.profileId = key;
+            state.doc = key ? cloneDoc(state.profiles[key]) : emptyDoc();
+            render();
+            persistNow();
+            syncProfileSelect();
+            return !!key;
+        }
+
+        function addProfile(name) {
+            const Profiles = profilesApi();
+            if (!Profiles || typeof Profiles.addProfile !== 'function') return false;
+            const seed = seedBar1(knownSpellsFor(state.classes, state.vocation));
+            const result = Profiles.addProfile(currentMap(), name, seed);
+            if (!result.ok) return false;
+            return adoptProfileMap(result.profiles, result.id);
+        }
+
+        function copyProfile(name) {
+            const Profiles = profilesApi();
+            if (!Profiles || typeof Profiles.copyProfile !== 'function' || !state.profileId) return false;
+            const result = Profiles.copyProfile(currentMap(), state.profileId, name);
+            if (!result.ok) return false;
+            return adoptProfileMap(result.profiles, result.id);
+        }
+
+        function renameProfile(name) {
+            const Profiles = profilesApi();
+            if (!Profiles || typeof Profiles.renameProfile !== 'function' || !state.profileId) return false;
+            const result = Profiles.renameProfile(currentMap(), state.profileId, name);
+            if (!result.ok) return false;
+            return adoptProfileMap(result.profiles, result.id);
+        }
+
+        function removeProfile() {
+            const Profiles = profilesApi();
+            if (!Profiles || typeof Profiles.removeProfile !== 'function' || !state.profileId) return false;
+            const result = Profiles.removeProfile(currentMap(), state.profileId);
+            if (!result.ok) return false;
+            return adoptProfileMap(result.profiles, result.nextId);
+        }
+
+        function slotSummary(slot) {
+            if (!slotFilled(slot)) return 'Empty';
+            if (slot.t === 'spell') return 'Spell ' + (slot.id || '');
+            if (slot.t === 'item') return 'Object ' + (slot.id || '');
+            if (slot.t === 'text') {
+                const text = slot.text ? String(slot.text) : '';
+                return text.length > 24 ? ('Text ' + text.slice(0, 24) + '…') : ('Text ' + text);
+            }
+            if (slot.t === 'multi') return 'Multi';
+            return slot.t || 'Empty';
+        }
+
+        function focusLiveSlot(barId, index) {
+            if (typeof document === 'undefined' || !document.querySelectorAll) return;
+            const nodes = document.querySelectorAll('.action-bar-slot');
+            const wantBar = String(barId | 0);
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                if (!el || String(el.getAttribute('data-slot')) !== String(index)) continue;
+                if (String(elBarId(el)) !== wantBar) continue;
+                if (typeof el.focus === 'function') el.focus();
+                return;
+            }
+        }
+
+        function selectedSlotRecord() {
+            const barId = state.editor.barId | 0;
+            const bar = barById(state.doc, barId);
+            const map = slotMap(bar);
+            const index = state.editor.slot | 0;
+            const existing = map[index] || { i: index };
+            const slot = Object.assign({ i: index }, existing, { i: index });
+            if (!Object.prototype.hasOwnProperty.call(existing, 'k')) {
+                slot.k = barId === 1 ? defaultKey(index) : '';
+            }
+            return slot;
+        }
+
+        function editSelected(kind) {
+            const barId = state.editor.barId | 0;
+            if (isBarLocked(barId)) return false;
+            const slot = selectedSlotRecord();
+            const deps = modalDeps(barId);
+            if (kind === 'clear') {
+                return deps.assignSlot(slot.i, {
+                    t: '',
+                    id: '',
+                    text: '',
+                    multi: null,
+                    k: slot.k || ''
+                });
+            }
+            const Assign = assignApi();
+            if (!Assign) return false;
+            if (kind === 'spell' && Assign.openAssignSpellModal) Assign.openAssignSpellModal(slot, deps);
+            else if (kind === 'object' && Assign.openAssignObjectModal) Assign.openAssignObjectModal(slot, deps);
+            else if (kind === 'text' && Assign.openAssignTextModal) Assign.openAssignTextModal(slot, deps);
+            else if (kind === 'multi' && Assign.openAssignMultiModal) Assign.openAssignMultiModal(slot, deps);
+            else if (kind === 'hotkey' && Assign.openAssignHotkeyModal) Assign.openAssignHotkeyModal(slot, deps);
+            else return false;
+            return true;
+        }
+
+        function syncSlotEditor() {
+            if (!state.editor) state.editor = { dock: 'bottom', barId: 1, slot: 0 };
+            const ui = (typeof EngineClientWindow !== 'undefined') ? EngineClientWindow : null;
+            const win = ui && typeof ui.attached === 'function' ? ui.attached() : null;
+            if (!win || typeof win.setSlots !== 'function') return;
+            const dock = state.editor.dock === 'left' || state.editor.dock === 'right'
+                ? state.editor.dock
+                : 'bottom';
+            state.editor.dock = dock;
+            const ids = barsForDock(dock);
+            if (ids.indexOf(state.editor.barId | 0) < 0) state.editor.barId = ids[0];
+            const barId = state.editor.barId | 0;
+            const bar = barById(state.doc, barId);
+            const map = slotMap(bar);
+            const page = bar ? clampPage(bar) : 0;
+            const count = visibleCount(barId);
+            const slots = [];
+            for (let n = 0; n < count; n++) {
+                const i = page + n;
+                const slot = map[i] || null;
+                let key = '';
+                if (barId === 1) key = keyOfSlot(i, slot);
+                else if (slot && Object.prototype.hasOwnProperty.call(slot, 'k')) key = normalizeHotkey(slot.k);
+                slots.push({ i: i, k: key, label: slotSummary(slot) });
+            }
+            win.setSlots({
+                dock: dock,
+                barId: barId,
+                bars: ids.map(function (id) { return { id: id, label: 'Bar ' + id }; }),
+                counts: {
+                    bottom: dockVisibleCount(state.doc, 'bottom'),
+                    left: dockVisibleCount(state.doc, 'left'),
+                    right: dockVisibleCount(state.doc, 'right')
+                },
+                slots: slots,
+                locked: isBarLocked(barId),
+                selected: state.editor.slot | 0,
+                onDock: function (next) {
+                    state.editor.dock = next === 'left' || next === 'right' ? next : 'bottom';
+                    state.editor.barId = barsForDock(state.editor.dock)[0];
+                    state.editor.slot = 0;
+                    syncSlotEditor();
+                },
+                onBar: function (next) {
+                    state.editor.barId = next | 0;
+                    state.editor.slot = 0;
+                    syncSlotEditor();
+                },
+                onSelect: function (index) {
+                    state.editor.slot = index | 0;
+                    focusLiveSlot(state.editor.barId, state.editor.slot);
+                    syncSlotEditor();
+                },
+                onEdit: function (kind) { editSelected(kind); },
+                onCount: function (nextDock, n) { setDockCount(nextDock, n); }
+            });
+        }
+
+        function switchProfile(id) {
+            const Profiles = profilesApi();
+            const key = Profiles && typeof Profiles.findProfileKey === 'function'
+                ? Profiles.findProfileKey(state.profiles, id)
+                : '';
+            if (!key) return false;
+            if (key === state.profileId) return true;
+            if (state.profileId) state.profiles[state.profileId] = cloneDoc(state.doc);
+            state.profileId = key;
+            state.doc = cloneDoc(state.profiles[key]);
+            render();
+            persistNow();
+            syncProfileSelect();
+            return true;
         }
 
         function queueSave() {
@@ -1165,31 +1794,61 @@
             }, SET_DEBOUNCE_MS);
         }
 
-        function applyStored(stored) {
-            if (!isEmptyDoc(stored)) {
-                state.doc = stored;
-                render();
-                return;
+        function loadProfileMap() {
+            const api = prefsApi();
+            if (!api || typeof api.loadActionBarProfiles !== 'function') {
+                return Promise.resolve({ v: 1, lastProfileId: '', profiles: {} });
             }
-            const seeded = seedBar1(knownSpellsFor(state.classes, state.vocation));
-            state.doc = seeded;
+            return api.loadActionBarProfiles().then(function (map) {
+                if (!map || typeof map !== 'object') {
+                    return { v: 1, lastProfileId: '', profiles: {} };
+                }
+                return map;
+            });
+        }
+
+        function adoptMap(map) {
+            const stored = map && typeof map === 'object' ? map : {};
+            const Profiles = profilesApi();
+            const seed = seedBar1(knownSpellsFor(state.classes, state.vocation));
+            const label = Profiles && typeof Profiles.classLabel === 'function'
+                ? Profiles.classLabel(state.vocation, state.classes)
+                : state.vocation;
+            const resolved = Profiles && typeof Profiles.resolveProfile === 'function'
+                ? Profiles.resolveProfile({
+                    characterName: state.characterName,
+                    vocationId: state.vocation,
+                    vocationLabel: label,
+                    profiles: stored.profiles || {},
+                    lastProfileId: stored.lastProfileId || '',
+                    seedDoc: seed
+                })
+                : { id: '', created: false, profiles: {} };
+            state.profiles = resolved.profiles || {};
+            state.profileId = resolved.id || '';
+            let doc = state.profileId ? state.profiles[state.profileId] : null;
+            let dirty = resolved.created === true;
+            if (state.profileId && isEmptyDoc(doc)) {
+                doc = seed;
+                state.profiles[state.profileId] = doc;
+                dirty = true;
+            }
+            state.doc = doc && typeof doc === 'object' ? doc : emptyDoc();
             render();
-            persistNow();
+            syncProfileSelect();
+            const last = stored.lastProfileId != null ? String(stored.lastProfileId) : '';
+            if (state.profileId && (dirty || last !== state.profileId)) persistNow();
         }
 
         function onEnter(info) {
             const id = info && (info.characterId != null ? info.characterId : info.id);
             state.characterId = id;
+            state.characterName = info && (info.name || info.characterName)
+                ? String(info.name || info.characterName)
+                : '';
             state.vocation = info && info.vocation ? String(info.vocation) : '';
-            return loadCatalogs().then(function () {
-                const api = prefsApi();
-                if (!api || typeof api.loadActionBars !== 'function') {
-                    applyStored(null);
-                    return;
-                }
-                return api.loadActionBars(state.characterId).then(applyStored);
-            }).catch(function () {
-                applyStored(null);
+            return loadCatalogs().then(loadProfileMap).then(adoptMap).catch(function () {
+                adoptMap({ v: 1, lastProfileId: '', profiles: {} });
             });
         }
 
@@ -1209,15 +1868,11 @@
                 : (ev.key ? String(ev.key).toUpperCase() : '');
             if (!combo) return;
             if (Assign && Assign.isBlockedHotkey && Assign.isBlockedHotkey(combo)) return;
-            const bar = bar1Of(state.doc);
+            const found = findHotkeySlot(combo);
+            if (!found) return;
+            const bar = barById(state.doc, found.barId);
             const map = slotMap(bar);
-            let slot = null;
-            for (let i = 0; i < VISIBLE_SLOTS; i++) {
-                if (keyOfSlot(i, map[i] || null) === combo) {
-                    slot = map[i] || null;
-                    break;
-                }
-            }
+            const slot = map[found.index] || null;
             if (!slotFilled(slot)) return;
             ev.preventDefault();
             fireSlot(slot);
@@ -1316,11 +1971,16 @@
             state.buckets = Object.create(null);
             state.bucketDur = Object.create(null);
             state.characterId = null;
+            state.characterName = '';
+            state.profileId = '';
+            state.profiles = {};
             state.anyOnCooldown = false;
+            state.hudKey = null;
             clearPrompt();
             const Assign = assignApi();
             if (Assign && Assign.closeAll) Assign.closeAll();
             render();
+            syncProfileSelect();
         }
 
         return {
@@ -1331,7 +1991,19 @@
             render: render,
             fireSlot: fireSlot,
             assignSlot: assignSlot,
+            assignBarSlot: assignBarSlot,
+            findHotkeySlot: findHotkeySlot,
+            clearSlotHotkey: clearSlotHotkey,
+            addProfile: addProfile,
+            copyProfile: copyProfile,
+            renameProfile: renameProfile,
+            removeProfile: removeProfile,
+            setGeneralBridge: setGeneralBridge,
+            switchProfile: switchProfile,
             setBarLocked: setBarLocked,
+            setBarPage: setBarPage,
+            setDockCount: setDockCount,
+            refreshSlots: refreshSlots,
             tryHandleSlotDrop: tryHandleSlotDrop,
             _state: state
         };
@@ -1341,6 +2013,8 @@
 
     return {
         VISIBLE_SLOTS: VISIBLE_SLOTS,
+        VISIBLE_SLOTS_VERTICAL: VISIBLE_SLOTS_VERTICAL,
+        MAX_SLOTS: MAX_SLOTS,
         BAR1_KEYS: BAR1_KEYS,
         MULTI_ACTION_DEPTH: MULTI_ACTION_DEPTH,
         SET_DEBOUNCE_MS: SET_DEBOUNCE_MS,
@@ -1364,11 +2038,23 @@
         create: createController,
         seedBar1: seedBar1,
         isEmptyDoc: isEmptyDoc,
+        barShown: barShown,
+        dockVisibleCount: dockVisibleCount,
+        maxPageFor: maxPageFor,
         knownSpellsFor: knownSpellsFor,
         bindHost: function (host) { return live.bindHost(host); },
         onEnter: function (info) { return live.onEnter(info); },
+        switchProfile: function (id) { return live.switchProfile(id); },
+        addProfile: function (name) { return live.addProfile(name); },
+        copyProfile: function (name) { return live.copyProfile(name); },
+        renameProfile: function (name) { return live.renameProfile(name); },
+        removeProfile: function () { return live.removeProfile(); },
+        findHotkeySlot: function (hotkey) { return live.findHotkeySlot(hotkey); },
+        clearSlotHotkey: function (barId, index) { return live.clearSlotHotkey(barId, index); },
+        setGeneralBridge: function (bridge) { return live.setGeneralBridge(bridge); },
         onCast: function (fx) { return live.onCast(fx); },
         reset: function () { return live.reset(); },
+        refreshSlots: function () { return live.refreshSlots(); },
         tryHandleSlotDrop: function (el, id) { return live.tryHandleSlotDrop(el, id); }
     };
 });

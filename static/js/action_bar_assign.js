@@ -34,6 +34,7 @@
     let ctxMenuEl = null;
     let modalRoot = null;
     let hotkeyCaptureHandler = null;
+    let hotkeyCaptureCallback = null;
     let itemPickSession = null;
     let itemPickClickHandler = null;
     let itemPickKeyHandler = null;
@@ -186,6 +187,62 @@
             document.removeEventListener('keydown', hotkeyCaptureHandler, true);
         }
         hotkeyCaptureHandler = null;
+        hotkeyCaptureCallback = null;
+    }
+
+    function cancelHotkeyCapture() {
+        const cb = hotkeyCaptureCallback;
+        stopHotkeyCapture();
+        if (cb) cb('');
+    }
+
+    /**
+     * One capture listener for general hotkeys. Escape is a bindable key
+     * when allowEscape is set; Cancel calls cancelHotkeyCapture.
+     * The slot modal keeps its own listener and treats Escape as cancel.
+     */
+    function beginHotkeyCapture(onKey, opts) {
+        closeModal();
+        const allowEscape = !!(opts && opts.allowEscape);
+        hotkeyCaptureCallback = typeof onKey === 'function' ? onKey : null;
+        hotkeyCaptureHandler = function (ev) {
+            if (!ev) return;
+            if (ev.key === 'Shift' || ev.key === 'Control' || ev.key === 'Alt' || ev.key === 'Meta') return;
+            if (ev.preventDefault) ev.preventDefault();
+            if (ev.stopPropagation) ev.stopPropagation();
+            if (ev.key === 'Escape' && !allowEscape) {
+                cancelHotkeyCapture();
+                return;
+            }
+            const raw = eventToHotkeyString(ev);
+            if (!raw) return;
+            const cb = hotkeyCaptureCallback;
+            stopHotkeyCapture();
+            if (cb) cb(normalizeHotkey(raw));
+        };
+        if (typeof document !== 'undefined') {
+            document.addEventListener('keydown', hotkeyCaptureHandler, true);
+        }
+    }
+
+    function openOverwriteConfirm(messageHtml, onOk) {
+        const m = openModal(
+            'Hotkey',
+            '<div class="action-bar-assign-form">'
+            + '<div class="action-bar-assign-warn">' + (messageHtml || '') + '</div>'
+            + '<div class="action-bar-assign-actions">'
+            + '<button type="button" class="btn btn-retro" data-ab-modal-close>Cancel</button>'
+            + '<button type="button" class="btn btn-retro btn-retro-cyan" id="abOverwriteOk">Ok</button>'
+            + '</div></div>'
+        );
+        if (!m) return;
+        const ok = m.body.querySelector('#abOverwriteOk');
+        if (ok) {
+            ok.addEventListener('click', function () {
+                closeModal();
+                if (onOk) onOk();
+            });
+        }
     }
 
     function closeModal() {
@@ -690,6 +747,12 @@
                     + ((barConflict | 0) + 1)
                     + '</strong>. Ok steals the binding.</div>';
             }
+            const generalLabel = deps.generalHotkeyLabel ? deps.generalHotkeyLabel(captured) : '';
+            if (generalLabel) {
+                html += '<div class="action-bar-assign-warn">Already used by <strong>'
+                    + escapeHtml(generalLabel)
+                    + '</strong>. Ok clears that general hotkey.</div>';
+            }
             warn.innerHTML = html;
             btnOk.disabled = false;
         }
@@ -722,6 +785,7 @@
         });
         btnOk.addEventListener('click', function () {
             if (!captured || isBlockedHotkey(captured)) return;
+            if (deps.releaseGeneralHotkey) deps.releaseGeneralHotkey(captured);
             deps.assignSlot(slot.i, {
                 t: slot.t || '',
                 id: slot.id,
@@ -996,6 +1060,9 @@
         openAssignObjectModal: openAssignObjectModal,
         openAssignTextModal: openAssignTextModal,
         openAssignHotkeyModal: openAssignHotkeyModal,
+        beginHotkeyCapture: beginHotkeyCapture,
+        cancelHotkeyCapture: cancelHotkeyCapture,
+        openOverwriteConfirm: openOverwriteConfirm,
         openAssignMultiModal: openAssignMultiModal,
         startItemPickMode: startItemPickMode,
         cancelItemPickMode: cancelItemPickMode,

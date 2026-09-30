@@ -33,44 +33,7 @@
                 <h2 class="am-sidebar-title">Runtime</h2>
                 <div class="game-stats play-stats">
                     <div><span class="label-retro">FPS</span> <span id="stat-fps" class="game-stat-value">—</span></div>
-                    <div><span class="label-retro">UPS</span> <span id="stat-ups" class="game-stat-value">—</span></div>
                     <div><span class="label-retro">RTT</span> <span id="stat-rtt" class="game-stat-value">—</span></div>
-                    <div><span class="label-retro">Tick</span> <span id="stat-tick" class="game-stat-value">—</span></div>
-                </div>
-            </div>
-            <div class="am-sidebar-section">
-                <h2 class="am-sidebar-title">Controls</h2>
-                <div class="card card-retro p-2 mb-2">
-                    <label class="label-retro" for="mouse-mode">Control</label>
-                    <select class="form-select form-select-retro form-select-sm w-100 mb-2" id="mouse-mode">
-                        <option value="0">Regular</option>
-                        <option value="1" selected>Classic</option>
-                        <option value="2">Smart Left</option>
-                    </select>
-                    <div id="loot-mode-wrap" class="mb-2">
-                        <label class="label-retro" for="loot-mode">Loot</label>
-                        <select class="form-select form-select-retro form-select-sm w-100" id="loot-mode">
-                            <option value="0" selected>Loot: Right</option>
-                            <option value="1">Loot: SHIFT+Right</option>
-                            <option value="2">Loot: Left</option>
-                        </select>
-                    </div>
-                    <div class="form-check form-switch mb-1" id="talk-right-wrap" hidden>
-                        <input class="form-check-input" type="checkbox" id="talk-right" style="cursor: pointer;">
-                        <label class="form-check-label label-retro mb-0 ms-1" for="talk-right">Talk on right-click</label>
-                    </div>
-                    <div class="form-check form-switch mb-1">
-                        <input class="form-check-input" type="checkbox" id="move-stack" style="cursor: pointer;" title="Off: plain drag opens the amount slider; Ctrl moves the full stack. On: plain drag moves the full stack; Ctrl opens the slider. Shift always moves 1.">
-                        <label class="form-check-label label-retro mb-0 ms-1" for="move-stack">Move stack without dialog</label>
-                    </div>
-                    <div class="form-check form-switch mb-2">
-                        <input class="form-check-input" type="checkbox" id="auto-chase" style="cursor: pointer;">
-                        <label class="form-check-label label-retro mb-0 ms-1" for="auto-chase">Auto Chase</label>
-                    </div>
-                    <div class="text-muted text-xxs mt-1">
-                        <small class="d-block"><i class="fa-solid fa-mouse"></i> RMB default · Ctrl+click menu</small>
-                        <small class="d-block"><i class="fa-solid fa-keyboard"></i> Arrows walk · U ladder · Space cycle</small>
-                    </div>
                 </div>
             </div>
             <div class="am-sidebar-section play-sidebar-log">
@@ -79,7 +42,6 @@
             </div>
         </div>
         <div class="game-sidebar-footer play-sidebar-footer">
-            <button type="button" class="btn btn-retro btn-retro-cyan w-100 mb-1" id="openEngineSettingsBtn" title="Character sheet & settings"><i class="fa-solid fa-wrench"></i> Settings</button>
             <button type="button" class="btn btn-retro btn-danger w-100 mb-1" id="leave-side" title="Log out and return to character selection"><i class="fa-solid fa-sign-out-alt"></i> Log out</button>
         </div>
     </aside>
@@ -161,7 +123,6 @@
             <section class="game-equipment-panel" aria-label="Equipment">
                 <div class="am-sidebar-title-row panel-title-row">
                     <h2 class="am-sidebar-title mb-0">Equipment</h2>
-                    <button type="button" class="btn btn-xs btn-outline-secondary party-details-btn ghost" id="equipment-details" title="Character details">Details</button>
                 </div>
                 <div class="equipment-card-container">
                     <div class="equipment-card" id="activeEquipmentCard">
@@ -216,6 +177,12 @@
                 </button>
                 <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleSkillsBtn" data-panel-toggle="skills" aria-label="Toggle Skills" title="Toggle Skills">
                     <i class="fa-solid fa-chart-simple" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleCharacterBtn" aria-label="Character" title="Character">
+                    <i class="fa-solid fa-user" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="btn btn-xs panel-toggle-btn" id="toggleSettingsBtn" aria-label="Settings" title="Settings">
+                    <i class="fa-solid fa-wrench" aria-hidden="true"></i>
                 </button>
             </div>
             <section class="game-backpack-panel panel-collapsible-section play-panel" data-panel-id="backpack" aria-label="Backpack">
@@ -338,15 +305,6 @@
 <div id="inventoryFloatRoot" class="inv-float-root" aria-hidden="true"></div>
 <div id="ctx-menu" class="ctx-menu inv-context-menu" hidden></div>
 <div id="item-popover" class="item-popover" hidden></div>
-<div id="profile-modal" class="modal" hidden>
-    <div class="modal-dialog">
-        <header>
-            <h2 id="profile-title">Character</h2>
-            <button type="button" class="panel-close" id="profile-close" aria-label="Close">×</button>
-        </header>
-        <div id="profile-body"></div>
-    </div>
-</div>
 <!-- No character IndexedDB. Leave sends LOGOUT so the server writes the snapshot. -->
 <script src="/js/prefs.js"></script>
 <script src="/js/api.js"></script>
@@ -364,9 +322,16 @@
 <script src="/js/sprite_presentation.js"></script>
 <script src="/js/combat_fx.js"></script>
 <script src="/js/action_bar_assign.js"></script>
+<script src="/js/action_bar_profiles.js"></script>
+<script src="/js/general_hotkeys.js"></script>
 <script src="/js/action_bars.js"></script>
 <script src="/js/float_panel_place.js"></script>
+<script src="/js/float_panel_drag.js"></script>
+<script src="/js/client_window.js"></script>
 <script src="/js/npc_shop_ui.js"></script>
+<script src="/js/container_drop.js"></script>
+<script src="/js/skill_progress.js"></script>
+<script src="/js/browse_field.js"></script>
 <script src="/js/play.js"></script>
 </body>
 </html>

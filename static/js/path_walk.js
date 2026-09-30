@@ -1,7 +1,9 @@
 'use strict';
 
 /**
- * Orthogonal BFS on the visible viewport. Client sends MOVE_PATH dirs; server validates occupancy per step.
+ * Eight-direction BFS on the visible viewport. Client sends MOVE_PATH dirs;
+ * the server validates occupancy, the relaxed corner rule, and step delay.
+ * Dirs: N0 E1 S2 W3 SW4 SE5 NW6 NE7.
  */
 (function (root, factory) {
     const api = factory();
@@ -15,7 +17,11 @@
         Object.freeze({ dir: 0, dx: 0, dy: -1 }),
         Object.freeze({ dir: 1, dx: 1, dy: 0 }),
         Object.freeze({ dir: 2, dx: 0, dy: 1 }),
-        Object.freeze({ dir: 3, dx: -1, dy: 0 })
+        Object.freeze({ dir: 3, dx: -1, dy: 0 }),
+        Object.freeze({ dir: 4, dx: -1, dy: 1 }),
+        Object.freeze({ dir: 5, dx: 1, dy: 1 }),
+        Object.freeze({ dir: 6, dx: -1, dy: -1 }),
+        Object.freeze({ dir: 7, dx: 1, dy: -1 })
     ]);
 
     function walkTile(id) {
@@ -33,6 +39,15 @@
 
     function key(x, y) {
         return x + ',' + y;
+    }
+
+    /**
+     * True when both adjacent cardinal tiles are closed. One open side,
+     * or a side the walk test cannot see, still allows the diagonal.
+     */
+    function diagonalClosed(x, y, dx, dy, isWalkable) {
+        if (!dx || !dy || typeof isWalkable !== 'function') return false;
+        return !isWalkable((x | 0) + dx, y | 0) && !isWalkable(x | 0, (y | 0) + dy);
     }
 
     function findOrthogonalPath(from, dest, isWalkable) {
@@ -56,6 +71,7 @@
                 const k = key(nx, ny);
                 if (came.has(k)) continue;
                 if (!isWalkable(nx, ny)) continue;
+                if (diagonalClosed(cur.x, cur.y, step.dx, step.dy, isWalkable)) continue;
                 came.set(k, { x: cur.x, y: cur.y, dir: step.dir });
                 q.push({ x: nx, y: ny });
             }
@@ -117,6 +133,7 @@
 
     return {
         DIRS,
+        diagonalClosed,
         walkTile,
         tileAt,
         findOrthogonalPath,

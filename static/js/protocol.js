@@ -34,7 +34,9 @@
         MOVE_ITEM: 42,
         USE_ITEM: 43,
         OPEN_BAG: 44,
-        CLOSE_BAG: 45
+        CLOSE_BAG: 45,
+        BROWSE_FIELD: 46,
+        BROWSE_FIELD_CLOSE: 47
     });
 
     const S2C = Object.freeze({
@@ -68,9 +70,10 @@
         SHOP: 132,
         FIELD: 133,
         FIELD_GONE: 134,
-        // 135 unused (was HOTKEYS; bars are client IndexedDB)
+        SKILL_PROGRESS: 135,
         GROUND: 136,
-        GROUND_GONE: 137
+        GROUND_GONE: 137,
+        BROWSE_FIELD: 138
     });
 
     const REASON = Object.freeze({
@@ -137,6 +140,11 @@
         const u = Math.max(1, Number(ups) || 20);
         const elapsedSec = Math.max(0, ((lastTick | 0) - (createdTick | 0)) / u);
         return now - elapsedSec * 1000;
+    }
+
+    // PING stores Date.now() as uint32. Subtract in that width so the high bits of the epoch do not show up as RTT.
+    function rttMs(nowMs, echo) {
+        return ((nowMs >>> 0) - (echo >>> 0)) >>> 0;
     }
 
     const SKILL_ORDER = Object.freeze([
@@ -233,6 +241,29 @@
         return encodeUnequip(containerId || '');
     }
 
+    function encodeBrowseField(x, y, z) {
+        return encodeTileUse(x, y, z);
+    }
+
+    function decodeBrowseField(payload) {
+        const r = new Reader(payload);
+        const x = r.i16();
+        const y = r.i16();
+        const z = r.i8();
+        const n = r.u8();
+        const slots = [];
+        for (let i = 0; i < n; i++) {
+            slots.push({
+                stackIndex: r.u8(),
+                uid: r.str(),
+                id: r.str(),
+                count: r.u16(),
+                flags: r.u8()
+            });
+        }
+        return { x, y, z, n, slots };
+    }
+
     function writeItemLoc(loc) {
         const enc = typeof TextEncoder === 'function' ? new TextEncoder() : null;
         const isTile = loc && (loc.kind === 'tile' || loc.kind === LOC_KIND.TILE);
@@ -300,6 +331,11 @@
         u16() { const x = this.v.getUint16(this.o, true); this.o += 2; return x; }
         i16() { const x = this.v.getInt16(this.o, true); this.o += 2; return x; }
         u32() { const x = this.v.getUint32(this.o, true); this.o += 4; return x; }
+        u64() {
+            const x = this.v.getBigUint64(this.o, true);
+            this.o += 8;
+            return Number(x);
+        }
         str() {
             const n = this.u8();
             const slice = this.b.subarray(this.o, this.o + n);
@@ -359,8 +395,8 @@
             x: r.i16(),
             y: r.i16(),
             z: r.i8(),
-            hp: r.u16(),
-            hpMax: r.u16(),
+            hp: r.u32(),
+            hpMax: r.u32(),
             flags: r.rest().length ? r.u8() : 0,
             look: r.rest().length ? r.str() : '',
             dir: r.rest().length ? r.u8() : 0
@@ -446,6 +482,8 @@
         encodeEquip,
         encodeUnequip,
         encodeCloseBag,
+        encodeBrowseField,
+        decodeBrowseField,
         encodeMoveItem,
         encodeMovePath,
         encodeCast,
@@ -459,6 +497,7 @@
         swingElementId,
         swingElementName,
         fieldCreatedAtMs,
+        rttMs,
         Reader
     };
 });

@@ -38,6 +38,61 @@ function main() {
 
     assert.strictEqual(pw.findOrthogonalPath({ x: 0, y: 0 }, { x: 1, y: 1 }, walkable), null);
 
+    const open = {
+        originX: 0, originY: 0, width: 3, height: 3,
+        tiles: [
+            1, 1, 1,
+            1, 1, 1,
+            1, 1, 1
+        ]
+    };
+    function openWalk(x, y) {
+        const t = pw.tileAt(open, x, y);
+        return t != null && pw.walkTile(t);
+    }
+    assert.deepStrictEqual(
+        pw.findOrthogonalPath({ x: 0, y: 2 }, { x: 1, y: 1 }, openWalk),
+        [7],
+        'open ground takes one north-east step'
+    );
+
+    const pinched = {
+        originX: 0, originY: 0, width: 3, height: 3,
+        tiles: [
+            1, 3, 1,
+            3, 1, 3,
+            1, 3, 1
+        ]
+    };
+    function pinchWalk(x, y) {
+        const t = pw.tileAt(pinched, x, y);
+        return t != null && pw.walkTile(t);
+    }
+    assert.strictEqual(
+        pw.findOrthogonalPath({ x: 1, y: 1 }, { x: 0, y: 0 }, pinchWalk),
+        null,
+        'both cardinal sides closed blocks the diagonal'
+    );
+    assert.strictEqual(pw.diagonalClosed(1, 1, -1, -1, pinchWalk), true);
+
+    const oneSide = {
+        originX: 0, originY: 0, width: 3, height: 3,
+        tiles: [
+            1, 1, 1,
+            3, 1, 1,
+            1, 1, 1
+        ]
+    };
+    function oneWalk(x, y) {
+        const t = pw.tileAt(oneSide, x, y);
+        return t != null && pw.walkTile(t);
+    }
+    assert.deepStrictEqual(
+        pw.findOrthogonalPath({ x: 1, y: 1 }, { x: 0, y: 0 }, oneWalk),
+        [6],
+        'one open side still allows north-west'
+    );
+
     const approach = pw.nearestApproach({ x: 0, y: 0 }, { x: 4, y: 0 }, 1, walkable);
     assert.ok(approach);
     assert.ok(pw.chebyshev(approach.x, approach.y, 4, 0) <= 1);

@@ -99,12 +99,16 @@ $classesRaw = [
             'critChance' => 5,
             'baseHp' => 185,
             'skillRates' => ['melee' => 1.5],
+            'baseSprite' => 'grave_cloud_giant_ravager',
+            'baseSpriteGenre' => 'rpg_fantasy',
         ],
     ],
 ];
 $cui = Router::classesUi($classesRaw);
 assert($cui['classes'][0]['id'] === 'mystic');
 assert($cui['classes'][0]['spells'][0] === 'snap_jab');
+assert($cui['classes'][0]['baseSprite'] === 'grave_cloud_giant_ravager');
+assert($cui['classes'][0]['baseSpriteGenre'] === 'rpg_fantasy');
 assert(!array_key_exists('critChance', $cui['classes'][0]));
 assert(!array_key_exists('baseHp', $cui['classes'][0]));
 assert(!array_key_exists('skillRates', $cui['classes'][0]));
@@ -117,6 +121,7 @@ if (is_file($liveClasses)) {
     assert(is_string($bufC));
     assert(!str_contains($bufC, 'critChance'));
     assert(!str_contains($bufC, 'baseHp'));
+    assert(!str_contains($bufC, 'skillRates'));
     assert(!str_contains($bufC, 'powerCurve'));
     $mystic = null;
     foreach ($filteredC['classes'] as $row) {
@@ -126,6 +131,8 @@ if (is_file($liveClasses)) {
     }
     assert(is_array($mystic));
     assert(($mystic['spells'][0] ?? '') === 'snap_jab');
+    assert(($mystic['label'] ?? '') === 'Mystic');
+    assert(($mystic['baseSprite'] ?? '') === 'grave_cloud_giant_ravager');
 }
 
 echo "ok spells_ui.php\n";

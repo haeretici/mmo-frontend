@@ -142,6 +142,84 @@
         return size;
     }
 
+    /**
+     * Watch-mode art for a vocation id.
+     * Same priority as dungeon-engine resolvePlayerSpriteArt for the class half:
+     * class baseSprite (and optional baseSpriteGenre) when the id is a class that has one.
+     * Creature catalog looks and vocations without a base sprite pass through unchanged.
+     *
+     * @param {string} lookOrVocation
+     * @param {Array<{id?: string, baseSprite?: string, baseSpriteGenre?: string}>|{classes?: Array}|null|undefined} classes
+     * @returns {{ id: string, genre: string|null }}
+     */
+    function resolveVocationSprite(lookOrVocation, classes) {
+        const id = String(lookOrVocation || '').trim();
+        if (!id) return { id: '', genre: null };
+        const list = Array.isArray(classes)
+            ? classes
+            : (classes && Array.isArray(classes.classes) ? classes.classes : []);
+        const lower = id.toLowerCase();
+        let row = null;
+        for (let i = 0; i < list.length; i++) {
+            const candidate = list[i];
+            if (!candidate || candidate.id == null) continue;
+            const rid = String(candidate.id);
+            if (rid === id) {
+                row = candidate;
+                break;
+            }
+            if (!row && rid.toLowerCase() === lower) row = candidate;
+        }
+        if (!row) return { id: id, genre: null };
+        const base = row.baseSprite != null ? String(row.baseSprite).trim() : '';
+        if (!base) return { id: id, genre: null };
+        const genre = row.baseSpriteGenre != null ? String(row.baseSpriteGenre).trim() : '';
+        return { id: base, genre: genre || null };
+    }
+
+    /**
+     * Sprite ids to try for one entity, first match wins once it loads.
+     * Players remap a vocation id to that class baseSprite so the stem is a
+     * creature catalog id. Creatures and NPCs keep look as the catalog id.
+     *
+     * @param {object|null|undefined} ent
+     * @param {{ classes?: Array|object|null, genre?: string, player?: boolean }} [opts]
+     * @returns {Array<{ id: string, genre: string }>}
+     */
+    function entitySpriteCandidates(ent, opts) {
+        const o = opts || {};
+        const e = ent && typeof ent === 'object' ? ent : {};
+        const player = o.player != null ? !!o.player : !(e.creature || e.npc);
+        const genre = o.genre ? String(o.genre) : 'rpg_fantasy';
+        const out = [];
+        const seen = Object.create(null);
+        function push(id, artGenre) {
+            const stem = id == null ? '' : String(id).trim();
+            if (!stem) return;
+            const g = artGenre || genre;
+            const key = g + '\0' + stem;
+            if (seen[key]) return;
+            seen[key] = true;
+            out.push({ id: stem, genre: g });
+        }
+        function pushLook(id) {
+            if (!player) {
+                push(id, genre);
+                return;
+            }
+            const art = resolveVocationSprite(id, o.classes);
+            if (art && art.id && art.id !== String(id == null ? '' : id).trim()) {
+                push(art.id, art.genre || genre);
+                return;
+            }
+            push(id, genre);
+        }
+        if (e.look) pushLook(e.look);
+        if (e.vocation) pushLook(e.vocation);
+        if (player) push('adventurer', genre);
+        return out;
+    }
+
     function resolveItemSpriteUrl(itemOrId, genre) {
         if (!itemOrId) return null;
         let id = '';
@@ -170,6 +248,8 @@
         loadState,
         getReady,
         getCachedImageSize,
+        resolveVocationSprite,
+        entitySpriteCandidates,
         resolveItemSpriteUrl
     };
 });

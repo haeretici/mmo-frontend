@@ -163,6 +163,18 @@
         };
     }
 
+    function tileHasGroundItem(hit) {
+        return !!(hit && (hit.groundLookUid || hit.groundMoveUid || hit.groundUseUid || hit.pickableUid));
+    }
+
+    function browseFieldIntent(hit) {
+        if (!tileHasGroundItem(hit)) return null;
+        return {
+            type: 'BROWSE_FIELD',
+            tile: { x: hit.x | 0, y: hit.y | 0, z: hit.z | 0 }
+        };
+    }
+
     function allowGroundLmbDrag(opts) {
         const o = opts || {};
         const hit = o.hit;
@@ -522,6 +534,9 @@
         } else if (hit.pickableUid) {
             entries.push({ action: 'PICKUP', label: 'Pick up' });
         }
+        if (browseFieldIntent(hit)) {
+            entries.push({ action: 'BROWSE_FIELD', label: 'Browse Field' });
+        }
         if (hit.isPlayerTile || hit.useStair) {
             entries.push({ action: 'USE_STAIR', label: 'Use' });
         }
@@ -656,6 +671,7 @@
         allowGroundLmbDrag,
         groundOpenBagIntent,
         groundPickupIntent,
-        groundItemIsContainer
+        groundItemIsContainer,
+        browseFieldIntent
     };
 });

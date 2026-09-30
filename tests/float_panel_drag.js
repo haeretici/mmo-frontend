@@ -118,23 +118,26 @@ function makeNode(tag) {
 }
 
 const playSource = fs.readFileSync(path.join(__dirname, '../static/js/play.js'), 'utf8');
+const FloatDrag = require('../static/js/float_panel_drag.js');
 
-// Test 1: wireFloatHeaderDrag core dragging mechanics
-test('wireFloatHeaderDrag updates style.left and style.top on pointer movements and captures pointer', () => {
-    const sandbox = {
-        floatZ: 1,
-        console: console
-    };
+function loadBagDrag(sandbox) {
+    sandbox.FloatDrag = FloatDrag;
     vm.createContext(sandbox);
-
-    // Extract bringFloatToFront and wireFloatHeaderDrag
     const bringMatch = playSource.match(/function bringFloatToFront\s*\([\s\S]*?\n\}/);
     assert.ok(bringMatch, 'bringFloatToFront function found');
     vm.runInContext(bringMatch[0], sandbox);
-
     const wireMatch = playSource.match(/function wireFloatHeaderDrag\s*\([\s\S]*?\n\}/);
     assert.ok(wireMatch, 'wireFloatHeaderDrag function found');
     vm.runInContext(wireMatch[0], sandbox);
+    return sandbox;
+}
+
+// Test 1: wireFloatHeaderDrag core dragging mechanics
+test('wireFloatHeaderDrag updates style.left and style.top on pointer movements and captures pointer', () => {
+    const sandbox = loadBagDrag({
+        floatZ: 1,
+        console: console
+    });
 
     const panel = makeNode('div');
     panel.id = 'test-panel';
@@ -218,16 +221,10 @@ test('wireFloatHeaderDrag updates style.left and style.top on pointer movements 
 });
 
 test('wireFloatHeaderDrag ignores clicks on buttons inside header', () => {
-    const sandbox = {
+    const sandbox = loadBagDrag({
         floatZ: 1,
         console: console
-    };
-    vm.createContext(sandbox);
-
-    const bringMatch = playSource.match(/function bringFloatToFront\s*\([\s\S]*?\n\}/);
-    vm.runInContext(bringMatch[0], sandbox);
-    const wireMatch = playSource.match(/function wireFloatHeaderDrag\s*\([\s\S]*?\n\}/);
-    vm.runInContext(wireMatch[0], sandbox);
+    });
 
     const panel = makeNode('div');
     panel.offsetLeft = 80;
@@ -264,18 +261,12 @@ test('wireFloatHeaderDrag ignores clicks on buttons inside header', () => {
 
 test('initFloatPanelDrag wires npc-dialog, npc-shop, and loot-panel', () => {
     const elements = {};
-    const sandbox = {
+    const sandbox = loadBagDrag({
         floatZ: 10,
         elements: elements,
         $: function (id) { return elements[id] || null; },
         console: console
-    };
-    vm.createContext(sandbox);
-
-    const bringMatch = playSource.match(/function bringFloatToFront\s*\([\s\S]*?\n\}/);
-    vm.runInContext(bringMatch[0], sandbox);
-    const wireMatch = playSource.match(/function wireFloatHeaderDrag\s*\([\s\S]*?\n\}/);
-    vm.runInContext(wireMatch[0], sandbox);
+    });
     const initMatch = playSource.match(/function initFloatPanelDrag\s*\([\s\S]*?\n\}/);
     assert.ok(initMatch, 'initFloatPanelDrag function found');
     vm.runInContext(initMatch[0], sandbox);
@@ -380,6 +371,64 @@ test('renderDialog populates text, reply buttons, and preserves position when al
     assert.strictEqual(newReplies.childNodes[0].textContent, 'Jobs');
     assert.strictEqual(newReplies.childNodes[1].textContent, 'Shops');
     assert.strictEqual(newReplies.childNodes[2].textContent, 'Bye');
+});
+
+test('wireHeaderDrag keeps a second panel still and clamps only through onMove', () => {
+    const bag = makeNode('div');
+    bag.style.left = '40px';
+    bag.style.top = '60px';
+    const slot = makeNode('div');
+    slot.textContent = 'rope';
+    bag.appendChild(slot);
+
+    const settings = makeNode('div');
+    settings.style.left = '10px';
+    settings.style.top = '20px';
+    const header = makeNode('div');
+    let moves = 0;
+    FloatDrag.wireHeaderDrag(header, settings, {
+        primaryButtonOnly: true,
+        readOrigin: function (node) {
+            return {
+                left: parseFloat(node.style.left) || 0,
+                top: parseFloat(node.style.top) || 0
+            };
+        },
+        onMove: function (el) {
+            moves += 1;
+            const left = parseFloat(el.style.left) || 0;
+            if (left > 100) el.style.left = '100px';
+        }
+    });
+
+    header.dispatchEvent({
+        type: 'pointerdown',
+        button: 2,
+        clientX: 0,
+        clientY: 0,
+        pointerId: 1,
+        target: header
+    });
+    header.dispatchEvent({ type: 'pointermove', clientX: 40, clientY: 40, pointerId: 1 });
+    assert.strictEqual(settings.style.left, '10px', 'a non-primary press does not drag');
+    assert.strictEqual(moves, 0);
+
+    header.dispatchEvent({
+        type: 'pointerdown',
+        button: 0,
+        clientX: 5,
+        clientY: 5,
+        pointerId: 2,
+        target: header
+    });
+    header.dispatchEvent({ type: 'pointermove', clientX: 200, clientY: 15, pointerId: 2 });
+    assert.strictEqual(settings.style.left, '100px', 'onMove can clamp the dragged panel');
+    assert.strictEqual(settings.style.top, '30px');
+    assert.strictEqual(moves, 1);
+    assert.strictEqual(bag.style.left, '40px');
+    assert.strictEqual(bag.style.top, '60px');
+    assert.strictEqual(slot.parentNode, bag);
+    assert.strictEqual(slot.textContent, 'rope');
 });
 
 test('SCSS and CSS contain drag cursors and touch-action for floating panel headers', () => {

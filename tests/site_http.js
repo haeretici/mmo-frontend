@@ -102,6 +102,7 @@ async function main() {
             assert.ok(cfg.json.wsUrl.startsWith('ws://'));
             assert.ok(!JSON.stringify(cfg.json).includes('mysql'));
             assert.ok(cfg.json.vocations.includes('scout'));
+            assert.ok(!cfg.json.vocations.includes('adventurer'));
             assert.strictEqual(cfg.json.mapId, 'firstlight_isle');
 
             const health = await request(port, { method: 'GET', path: '/health' });
@@ -149,11 +150,15 @@ async function main() {
             const mystic = classesUi.json.classes.find((c) => c.id === 'mystic');
             assert.ok(mystic, 'classes-ui has mystic');
             assert.strictEqual(mystic.spells[0], 'snap_jab');
+            assert.strictEqual(mystic.label, 'Mystic');
+            assert.strictEqual(mystic.baseSprite, 'grave_cloud_giant_ravager');
             assert.strictEqual(mystic.critChance, undefined);
             assert.strictEqual(mystic.baseHp, undefined);
+            assert.strictEqual(mystic.skillRates, undefined);
             const classText = JSON.stringify(classesUi.json);
             assert.ok(!classText.includes('critChance'));
             assert.ok(!classText.includes('baseHp'));
+            assert.ok(!classText.includes('skillRates'));
 
             const wsHttp = await request(port, { method: 'GET', path: '/v1/ws' });
             assert.strictEqual(wsHttp.status, 404);
@@ -265,6 +270,7 @@ async function main() {
             assert.strictEqual(wiki.status, 200);
             assert.ok(wiki.text.includes('menu-item active" href="/wiki"'));
             assert.ok(wiki.text.includes('guardian'));
+            assert.ok(!wiki.text.includes('adventurer'));
         }, { gameOrigin: mock.origin });
     } finally {
         await mock.close();

@@ -79,9 +79,9 @@ function main() {
     assert.strictEqual(turn.readyDir(0, 200), 0);
     turn.markEmitted(0);
     assert.strictEqual(turn.keyDown('ArrowRight', 100), true);
-    assert.strictEqual(turn.currentDir(), 1);
+    assert.strictEqual(turn.currentDir(), 7, 'up+right is north-east');
     assert.strictEqual(turn.readyDir(100, 200), null);
-    assert.strictEqual(turn.readyDir(200, 200), 1);
+    assert.strictEqual(turn.readyDir(200, 200), 7);
     turn.keyUp('ArrowRight');
     assert.strictEqual(turn.currentDir(), 0);
     turn.keyUp('ArrowUp');
@@ -90,6 +90,37 @@ function main() {
 
     const slow = countEmits(800, 16, 400);
     assert.strictEqual(slow.length, 3);
+
+    const custom = kw.create({
+        dirOf: function (token) { return token === 'I' ? 0 : null; }
+    });
+    assert.strictEqual(custom.keyDown('I', 0), true);
+    assert.strictEqual(custom.keyDown('KeyW', 0), false);
+    assert.strictEqual(custom.currentDir(), 0);
+    custom.keyUp('I');
+    assert.strictEqual(custom.isHeld(), false);
+
+    const chord = kw.create();
+    assert.strictEqual(chord.keyDown('ArrowUp', 0), true);
+    assert.strictEqual(chord.keyDown('ArrowLeft', 10), true);
+    assert.strictEqual(chord.currentDir(), 6, 'up+left is north-west');
+    chord.keyUp('ArrowLeft');
+    assert.strictEqual(chord.currentDir(), 0);
+    chord.keyUp('ArrowUp');
+
+    const opposite = kw.create();
+    assert.strictEqual(opposite.keyDown('ArrowUp', 0), true);
+    assert.strictEqual(opposite.keyDown('ArrowDown', 10), true);
+    assert.strictEqual(opposite.currentDir(), 2, 'latest opposite key wins the axis');
+    opposite.keyUp('ArrowDown');
+    assert.strictEqual(opposite.currentDir(), 0);
+
+    const bound = kw.create({
+        dirOf: function (token) { return token === 'Q' ? 7 : kw.dirOf(token); }
+    });
+    assert.strictEqual(bound.keyDown('Q', 0), true);
+    assert.strictEqual(bound.currentDir(), 7);
+    assert.strictEqual(bound.readyDir(0, 200), 7);
 
     console.log('ok keyboard_walk');
 }

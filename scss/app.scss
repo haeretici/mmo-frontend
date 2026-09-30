@@ -482,6 +482,19 @@ footer {
   line-height: 0;
 }
 
+.play-canvas-wrap.action-bars-layout {
+  line-height: normal;
+
+  .canvas-middle-row,
+  .canvas-center-wrapper {
+    min-width: 0;
+  }
+}
+
+.action-bar-dock {
+  contain: layout;
+}
+
 canvas#world {
   image-rendering: pixelated;
   background: #000;
@@ -1203,8 +1216,17 @@ canvas#world {
   background: #141824;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 4px;
-  color: var(--text-muted, #{$text-muted});
+  color: rgba(255, 255, 255, 0.72);
   cursor: pointer;
+
+  &.is-locked {
+    color: #facc15;
+    border-color: rgba(250, 204, 21, 0.55);
+  }
+
+  i {
+    pointer-events: none;
+  }
 }
 
 .action-bar-slot.drag-over {
@@ -1369,6 +1391,13 @@ canvas#world {
   }
 }
 
+.game-backpack-panel.drag-over,
+.inv-float-panel[data-container-uid].drag-over,
+.inv-float-panel[data-open-bag-uid].drag-over {
+  outline: 2px solid var(--accent-secondary, #{$accent-secondary});
+  outline-offset: -2px;
+}
+
 .ground-drag-avatar {
   position: fixed;
   pointer-events: none;
@@ -1444,6 +1473,212 @@ canvas#world {
     }
 
   }
+}
+
+// In-page Settings shell and Character float. Owned here so /play does
+// not depend on Bootstrap .modal / .show (those rules are not on this page).
+.float-panel.client-window {
+  &[hidden] {
+    display: none !important;
+  }
+
+  &.is-focused {
+    border-color: var(--accent-secondary, #{$accent-secondary});
+  }
+
+  .client-window-body {
+    display: flex;
+    align-items: stretch;
+    min-height: 200px;
+  }
+
+  .client-window-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 7.5rem;
+    flex-shrink: 0;
+    padding: 6px;
+    border-right: 1px solid var(--border-color, #{$border-color});
+    background: rgba(0, 0, 0, 0.25);
+
+    button {
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted, #{$text-muted});
+      font-size: 0.72rem;
+      padding: 4px 6px;
+      cursor: pointer;
+      border-radius: 2px;
+
+      &.is-active {
+        color: var(--accent-secondary, #{$accent-secondary});
+        border-color: rgba(0, 242, 254, 0.35);
+        background: rgba(0, 242, 254, 0.08);
+      }
+    }
+  }
+
+  .client-window-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+
+    &[hidden] {
+      display: none !important;
+    }
+  }
+
+  .client-window-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    [hidden] {
+      display: none !important;
+    }
+  }
+
+  .client-window-control-label {
+    display: block;
+    margin: 0 0 2px;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #{$text-muted});
+  }
+
+  .client-window-controls select,
+  .client-window-controls input[type="text"] {
+    width: 100%;
+    background: var(--bg-input, #{$bg-input});
+    color: var(--text-main, #{$text-main});
+    border: 1px solid var(--border-color, #{$border-color});
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 0.78rem;
+  }
+
+  .client-window-pane[data-pane="hotkeys"] {
+    max-height: min(70vh, 560px);
+    overflow: auto;
+  }
+
+  .client-window-section {
+    margin: 8px 0 0;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #{$text-muted});
+  }
+
+  .client-window-hint {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--text-muted, #{$text-muted});
+  }
+
+  .client-window-counts {
+    display: flex;
+    gap: 8px;
+
+    .client-window-field {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  .client-window-profile-actions,
+  .client-window-edit-actions,
+  .client-window-hotkey-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .client-window-controls button {
+    font-size: 0.72rem;
+    line-height: 1.2;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border-color, #{$border-color});
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main, #{$text-main});
+    cursor: pointer;
+  }
+
+  .client-window-slot-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 9.5rem;
+    overflow: auto;
+  }
+
+  .client-window-slot {
+    text-align: left;
+    font-family: ui-monospace, monospace;
+
+    &.is-selected {
+      color: var(--accent-secondary, #{$accent-secondary});
+      border-color: rgba(0, 242, 254, 0.45);
+    }
+  }
+
+  .client-window-hotkey-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .client-window-hotkey-label {
+    flex: 0 0 8.5rem;
+    padding-top: 2px;
+  }
+
+  .client-window-controls .form-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    min-height: 0;
+  }
+
+  .client-window-lines {
+    margin: 0;
+  }
+
+  .client-window-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 4px;
+  }
+
+  .client-window-label {
+    color: var(--text-muted, #{$text-muted});
+  }
+
+  .client-window-value {
+    color: var(--text-main, #{$text-main});
+    text-align: right;
+  }
+}
+
+.float-panel.client-window-settings {
+  width: 560px;
+  min-width: 360px;
+  max-width: min(640px, calc(100vw - 16px));
+}
+
+.float-panel.client-window-character {
+  width: 240px;
+  min-width: 200px;
+  max-width: 280px;
 }
 
 

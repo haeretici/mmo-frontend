@@ -21,6 +21,7 @@ function main() {
     assert.strictEqual(fe.S2C.HELLO, 100);
     assert.strictEqual(fe.S2C.SHOP, 132);
     assert.strictEqual(fe.S2C.SKILLS, 124);
+    assert.strictEqual(fe.S2C.SKILL_PROGRESS, 135);
     assert.strictEqual(fe.S2C.WORLD_PIN, 125);
     assert.strictEqual(fe.S2C.WORLD_PIN_GONE, 126);
     assert.strictEqual(fe.SKILL_ORDER.length, 8);
@@ -41,6 +42,15 @@ function main() {
     const r = new fe.Reader(frame);
     assert.strictEqual(r.u16(), 1);
     assert.strictEqual(r.u32(), 1);
+
+    // Echo is the low 32 bits of Date.now(); 1786706395169 - that stamp must not display as ~1e12.
+    const sampleNow = 1786706395169;
+    assert.strictEqual(fe.rttMs(sampleNow, sampleNow - 33), 33);
+    assert.strictEqual(fe.rttMs(sampleNow, 0), 33);
+    assert.strictEqual(fe.rttMs(sampleNow, sampleNow >>> 0), 0);
+    assert.strictEqual(fe.rttMs(1791001362442, 4294967290), 16);
+    const playJs = fs.readFileSync(path.join(__dirname, '../static/js/play.js'), 'utf8');
+    assert.ok(playJs.includes('rttMs(Date.now(), echo)'), 'play.js uses uint32 RTT');
 
     const shop = fe.encodeStrPayload(42, 3, 'gold_coin');
     const sr = new fe.Reader(shop);
@@ -87,6 +97,25 @@ function main() {
         }));
         assert.strictEqual(feAppear.dir, 3);
         assert.strictEqual(feAppear.look, 'rat');
+        const wideAppear = fe.decodeAppear(messages.encodeAppear({
+            id: 3, name: 'Ash', x: 1, y: 2, z: 0, hp: 75065, hpMax: 75065, dir: 1
+        }));
+        assert.strictEqual(wideAppear.hp, 75065);
+        assert.strictEqual(wideAppear.hpMax, 75065);
+        const wideExp = messages.encodeExp(2080834749800, 1249250200, 5000);
+        const er = new fe.Reader(wideExp);
+        assert.strictEqual(er.u64(), 2080834749800);
+        assert.strictEqual(er.u64(), 1249250200);
+        assert.strictEqual(er.u16(), 5000);
+        const progress = messages.encodeSkillProgress({
+            _skillTryProgress: { fist: 10, sword: 4 },
+            _manaTowardMagic: 800
+        });
+        assert.strictEqual(progress.length, 64);
+        const pr = new fe.Reader(progress);
+        assert.strictEqual(pr.u64(), 10);
+        assert.strictEqual(pr.u64(), 0);
+        assert.strictEqual(pr.u64(), 4);
 
         const closeAll = fe.encodeCloseBag('');
         const closeOne = fe.encodeCloseBag('i3');
@@ -135,6 +164,30 @@ function main() {
         assert.strictEqual(g.uid, 'i2');
         assert.strictEqual(g.id, 'gold_coin');
         assert.strictEqual(g.count, 3);
+
+        assert.strictEqual(fe.C2S.BROWSE_FIELD, 46);
+        assert.strictEqual(fe.C2S.BROWSE_FIELD_CLOSE, 47);
+        assert.strictEqual(fe.S2C.BROWSE_FIELD, 138);
+        const browseTile = fe.encodeBrowseField(4, -2, 6);
+        const browseReq = messages.decodeBrowseFieldTile(browseTile);
+        assert.strictEqual(browseReq.x, 4);
+        assert.strictEqual(browseReq.y, -2);
+        assert.strictEqual(browseReq.z, 6);
+        const browseBuf = messages.encodeBrowseField({
+            x: 4,
+            y: -2,
+            z: 6,
+            slots: [
+                { stackIndex: 0, uid: 'g3', id: 'bf_satchel', count: 1, flags: 1 },
+                { stackIndex: 1, uid: 'g1', id: 'bf_pebble', count: 2, flags: 0 }
+            ]
+        });
+        const feBrowse = fe.decodeBrowseField(browseBuf);
+        assert.strictEqual(feBrowse.n, 2);
+        assert.strictEqual(feBrowse.slots[0].uid, 'g3');
+        assert.strictEqual(feBrowse.slots[0].flags, 1);
+        assert.strictEqual(feBrowse.slots[1].stackIndex, 1);
+        assert.strictEqual(feBrowse.slots[1].count, 2);
 
         // Cast parity: frontend encoder -> server decoder
         const castBuf = fe.encodeCast({ spellId: 'snap_jab', targetId: 101, x: 12, y: 15, z: 6 });

@@ -9,6 +9,8 @@ const LEGACY_CHAR_DB = 'HuntDLClientDB';
 const PREFS_DB_NAME = 'engine.prefs';
 const PREFS_DB_VERSION = 1;
 const ACTION_BARS_STORE = 'actionBars';
+const ACTION_BAR_PROFILES_KEY = 'actionBarProfiles';
+const GENERAL_HOTKEYS_KEY = 'generalHotkeys';
 const actionBarsMem = Object.create(null);
 
 const DEFAULT_MOUSE_CONTROLS = Object.freeze({
@@ -228,6 +230,58 @@ function clearActionBarsMem() {
     for (let i = 0; i < keys.length; i++) delete actionBarsMem[keys[i]];
 }
 
+function normalizeProfileMap(raw) {
+    const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const bag = src.profiles && typeof src.profiles === 'object' && !Array.isArray(src.profiles)
+        ? src.profiles
+        : {};
+    const profiles = {};
+    const keys = Object.keys(bag);
+    for (let i = 0; i < keys.length; i++) {
+        const name = String(keys[i]).trim();
+        const doc = bag[keys[i]];
+        if (!name || !doc || typeof doc !== 'object' || Array.isArray(doc)) continue;
+        const copy = JSON.parse(JSON.stringify(doc));
+        delete copy.hotkeys;
+        profiles[name] = copy;
+    }
+    return {
+        v: 1,
+        lastProfileId: src.lastProfileId != null ? String(src.lastProfileId).trim() : '',
+        profiles: profiles
+    };
+}
+
+function loadActionBarProfiles() {
+    return loadActionBars(ACTION_BAR_PROFILES_KEY).then(function (row) {
+        return normalizeProfileMap(row);
+    });
+}
+
+function saveActionBarProfiles(map) {
+    const payload = normalizeProfileMap(map);
+    return saveActionBars(ACTION_BAR_PROFILES_KEY, payload).then(function () {
+        return payload;
+    });
+}
+
+function loadGeneralHotkeys() {
+    return loadActionBars(GENERAL_HOTKEYS_KEY).then(function (row) {
+        return row && typeof row === 'object' ? row : null;
+    });
+}
+
+function saveGeneralHotkeys(doc) {
+    const payload = doc && typeof doc === 'object'
+        ? JSON.parse(JSON.stringify(doc))
+        : { v: 1, actions: {} };
+    delete payload.profiles;
+    delete payload.hotkeys;
+    return saveActionBars(GENERAL_HOTKEYS_KEY, payload).then(function () {
+        return payload;
+    });
+}
+
 deleteLegacyCharacterStore();
 
 const EnginePrefs = {
@@ -236,6 +290,8 @@ const EnginePrefs = {
     MOUSE_CONTROLS_KEY: MOUSE_CONTROLS_KEY,
     PREFS_DB_NAME: PREFS_DB_NAME,
     ACTION_BARS_STORE: ACTION_BARS_STORE,
+    ACTION_BAR_PROFILES_KEY: ACTION_BAR_PROFILES_KEY,
+    GENERAL_HOTKEYS_KEY: GENERAL_HOTKEYS_KEY,
     getLastEmail: getLastEmail,
     setLastEmail: setLastEmail,
     writePlayHandoff: writePlayHandoff,
@@ -250,6 +306,10 @@ const EnginePrefs = {
     saveSidebarPanelsPrefs: saveSidebarPanelsPrefs,
     loadActionBars: loadActionBars,
     saveActionBars: saveActionBars,
+    loadActionBarProfiles: loadActionBarProfiles,
+    saveActionBarProfiles: saveActionBarProfiles,
+    loadGeneralHotkeys: loadGeneralHotkeys,
+    saveGeneralHotkeys: saveGeneralHotkeys,
     clearActionBarsMem: clearActionBarsMem
 };
 

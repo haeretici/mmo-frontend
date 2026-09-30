@@ -236,6 +236,20 @@ function main() {
     assert.strictEqual(resolvedG.pickableUid, 'i1');
     assert.strictEqual(resolvedG.groundMoveUid, 'i2');
     const gMenu = md.buildCanvasContextMenuEntries(resolvedG);
+    assert.ok(gMenu.some((e) => e.action === 'BROWSE_FIELD' && e.label === 'Browse Field'));
+    const browseIntent = md.browseFieldIntent(resolvedG);
+    assert.strictEqual(browseIntent.type, 'BROWSE_FIELD');
+    assert.strictEqual(browseIntent.tile.x, 4);
+    assert.strictEqual(browseIntent.tile.z, 0);
+    assert.strictEqual(md.browseFieldIntent(empty), null);
+    assert.strictEqual(md.browseFieldIntent(corpse), null);
+    assert.strictEqual(md.browseFieldIntent(herb), null);
+    const corpseMenu = md.buildCanvasContextMenuEntries(corpse);
+    assert.ok(!corpseMenu.some((e) => e.action === 'BROWSE_FIELD'), 'corpse-only tile has no Browse Field');
+    const pinOnly = md.buildCanvasContextMenuEntries(herb);
+    assert.ok(!pinOnly.some((e) => e.action === 'BROWSE_FIELD'), 'pin-only tile has no Browse Field');
+    const emptyMenu = md.buildCanvasContextMenuEntries(empty);
+    assert.ok(!emptyMenu.some((e) => e.action === 'BROWSE_FIELD'), 'empty tile has no Browse Field');
     const resolvedCorpseStack = md.resolveCanvasHit({
         tile: { x: 5, y: 5, z: 0 },
         player: { id: 1, x: 4, y: 5, z: 0 },

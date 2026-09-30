@@ -35,7 +35,7 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, encodeBrowseField, decodeBrowseField, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, rttMs, Reader } = EngineProtocol;
 const Mouse = EngineMouse;
 const InvMouse = typeof EngineInventoryMouse !== 'undefined' ? EngineInventoryMouse : null;
 const Path = EnginePath;
@@ -45,10 +45,14 @@ const Visual = EngineVisual;
 const KeyWalk = EngineKeyboardWalk;
 const Hud = EngineEntityHud;
 const FloatPlace = typeof EngineFloatPanelPlace !== 'undefined' ? EngineFloatPanelPlace : null;
+const FloatDrag = typeof EngineFloatPanelDrag !== 'undefined' ? EngineFloatPanelDrag : null;
 const NpcShopUi = typeof EngineNpcShopUi !== 'undefined' ? EngineNpcShopUi : (typeof require === 'function' ? require('./npc_shop_ui.js') : null);
 const Ground = typeof EngineGroundRenderer !== 'undefined' ? EngineGroundRenderer : null;
 const SpritePres = typeof EngineSpritePresentation !== 'undefined' ? EngineSpritePresentation : null;
 const CombatFx = typeof EngineCombatFx !== 'undefined' ? EngineCombatFx : null;
+const ContainerDrop = typeof EngineContainerDrop !== 'undefined' ? EngineContainerDrop : null;
+const SkillProgress = typeof EngineSkillProgress !== 'undefined' ? EngineSkillProgress : null;
+const BrowseField = typeof EngineBrowseField !== 'undefined' ? EngineBrowseField : null;
 const tilemapCache = Visual && typeof Visual.createTilemapCache === 'function' ? Visual.createTilemapCache({ margin: 2 }) : null;
 
 let ws = null;
@@ -62,6 +66,8 @@ let groundItems = new Map();
 let groundByUid = new Map();
 let groundDrag = null;
 let groundDragAvatar = null;
+let browseUi = null;
+const groundRejectSeqs = [];
 let fields = new Map();
 let pendingUseWith = null;
 let seenAt = new Map();
@@ -81,6 +87,7 @@ let equipment = {};
 let capVal = null;
 let capMax = null;
 let skills = null;
+let skillProgress = null;
 let talkNpc = 0;
 let shopNpc = 0;
 let currentShop = null;
@@ -100,7 +107,18 @@ let walkBusy = false;
 let walkQueued = false;
 let pendingAfterWalk = null;
 let chaseWalk = false;
-const keyWalk = KeyWalk.create();
+const GeneralHotkeys = typeof EngineGeneralHotkeys !== 'undefined' ? EngineGeneralHotkeys : null;
+let generalHotkeys = GeneralHotkeys ? GeneralHotkeys.defaults() : null;
+let generalCapture = null;
+const keyWalk = KeyWalk.create({
+    dirOf: function (token) {
+        if (!GeneralHotkeys || !generalHotkeys) return KeyWalk.dirOf(token);
+        const dir = GeneralHotkeys.moveDir
+            ? GeneralHotkeys.moveDir(token, generalHotkeys)
+            : GeneralHotkeys.cardinalDir(token, generalHotkeys);
+        return dir == null ? null : dir;
+    }
+});
 let buttonsDown = { left: false, right: false };
 let cancelNext = false;
 let suppressNextSlotClick = false;
@@ -117,6 +135,8 @@ let mapId = 'firstlight_isle';
 let camX = 0;
 let camY = 0;
 let stepMs = 200;
+const DIAGONAL_STEP_FACTOR = 2;
+let walkGapScale = 1;
 const visualLoader = Visual.createLoader();
 
 const canvas = document.getElementById('world');
@@ -152,9 +172,12 @@ function visualPos(ent) {
 
 function applyDirFacing(ent, dir) {
     if (!ent || dir == null) return;
-    ent.dir = dir;
-    if ((dir | 0) === 3) ent.facing = -1;
-    else if ((dir | 0) === 1) ent.facing = 1;
+    ent.dir = dir | 0;
+    const step = Path && Path.DIRS ? Path.DIRS[ent.dir] : null;
+    if (step && step.dx < 0) ent.facing = -1;
+    else if (step && step.dx > 0) ent.facing = 1;
+    else if (ent.dir === 3) ent.facing = -1;
+    else if (ent.dir === 1) ent.facing = 1;
 }
 
 function faceTowardTarget(ent, target) {
@@ -173,12 +196,14 @@ function beginSlide(ent, x, y, z) {
     const sameFloor = vis && (ent.z | 0) === (z | 0);
     if (sameFloor && vis && ((vis.x !== x) || (vis.y !== y))) {
         const dx = x - vis.x;
+        const dy = y - vis.y;
         if (dx < -0.01) ent.facing = -1;
         else if (dx > 0.01) ent.facing = 1;
         ent.fromX = vis.x;
         ent.fromY = vis.y;
         ent.moveAt = nowMs();
-        ent.moveDur = stepMs;
+        const diagonal = Math.abs(dx) > 0.45 && Math.abs(dy) > 0.45;
+        ent.moveDur = diagonal ? stepMs * DIAGONAL_STEP_FACTOR : stepMs;
     } else {
         const prevX = ent.x != null ? ent.x : x;
         const dx = x - prevX;
@@ -277,6 +302,10 @@ function send(opcode, payload) {
     const seq = clientSeq;
     clientSeq += 1;
     ws.send(encodeFrame(opcode, seq, payload));
+    if (opcode === C2S.MOVE_ITEM || opcode === C2S.OPEN_BAG) {
+        groundRejectSeqs.push(seq);
+        if (groundRejectSeqs.length > 40) groundRejectSeqs.shift();
+    }
     return seq;
 }
 
@@ -291,6 +320,9 @@ function underfootTile() {
 }
 
 function setHud() {
+    if (typeof EngineClientWindow !== 'undefined' && EngineClientWindow.syncCharacter) {
+        EngineClientWindow.syncCharacter(self);
+    }
     if (!self) return;
     const floor = viewport ? viewport.z : self.z;
     if (statusEl) {
@@ -483,6 +515,11 @@ function renderCombatList() {
     return renderCombat();
 }
 
+function skillFillStyle(percent, rest) {
+    const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+    return 'linear-gradient(to right, #31582f ' + pct + '%, ' + rest + ' ' + pct + '%)';
+}
+
 function renderSkills() {
     const el = $('skillsPanelList');
     if (!el) return;
@@ -495,9 +532,16 @@ function renderSkills() {
         return;
     }
 
+    const rates = SkillProgress ? SkillProgress.ratesFor(self.vocation) : null;
+    const levelProg = SkillProgress
+        ? SkillProgress.levelProgress(self.experience, self.level)
+        : null;
     const lvlRow = document.createElement('div');
     lvlRow.className = 'skills-panel-level';
-    lvlRow.title = 'Level ' + (self.level || 1);
+    if (levelProg) {
+        lvlRow.title = levelProg.tooltip;
+        lvlRow.style.background = skillFillStyle(levelProg.percent, '#0a0d12');
+    }
     const lvlLabel = document.createElement('span');
     lvlLabel.className = 'skills-panel-level-label';
     lvlLabel.textContent = 'Level';
@@ -520,8 +564,14 @@ function renderSkills() {
         label.textContent = row.label;
         const val = document.createElement('span');
         val.className = 'skills-panel-value';
-        const n = skills && skills[row.key] != null ? skills[row.key] : '—';
-        val.textContent = String(n);
+        const n = skills && skills[row.key] != null ? skills[row.key] : null;
+        val.textContent = n == null ? '—' : String(n);
+        if (n != null && SkillProgress) {
+            const counter = skillProgress && skillProgress[row.key] != null ? skillProgress[row.key] : 0;
+            const prog = SkillProgress.skillProgress(row.key, n, counter, rates);
+            d.title = prog.tooltip;
+            d.style.background = skillFillStyle(prog.percent, 'rgba(0, 0, 0, 0.25)');
+        }
         d.appendChild(label);
         d.appendChild(val);
         grid.appendChild(d);
@@ -596,7 +646,8 @@ function removeGroundUid(uid) {
 }
 
 function backpackMoveDest() {
-    return { kind: 'container', containerUid: bag.containerId || 'root', index: 0 };
+    const index = ContainerDrop ? ContainerDrop.CONTAINER_INSERT_INDEX : 255;
+    return { kind: 'container', containerUid: bag.containerId || 'root', index: index };
 }
 
 function tileMoveLoc(x, y, z, stackIndex) {
@@ -738,30 +789,10 @@ function bringFloatToFront(el) {
 }
 
 function wireFloatHeaderDrag(header, el) {
-    if (!header || !el || header._hasFloatDrag) return;
-    header._hasFloatDrag = true;
-    let pan = null;
-    header.addEventListener('pointerdown', function (ev) {
-        const t = ev.target;
-        if (t && t.closest && t.closest('button')) return;
-        bringFloatToFront(el);
-        pan = {
-            x: ev.clientX,
-            y: ev.clientY,
-            sl: el.offsetLeft,
-            st: el.offsetTop
-        };
-        if (header.setPointerCapture && ev.pointerId != null) {
-            try { header.setPointerCapture(ev.pointerId); } catch (e) {}
-        }
+    if (!FloatDrag || !header || !el) return;
+    FloatDrag.wireHeaderDrag(header, el, {
+        onRaise: function () { bringFloatToFront(el); }
     });
-    header.addEventListener('pointermove', function (ev) {
-        if (!pan) return;
-        el.style.left = pan.sl + (ev.clientX - pan.x) + 'px';
-        el.style.top = pan.st + (ev.clientY - pan.y) + 'px';
-    });
-    header.addEventListener('pointerup', function () { pan = null; });
-    header.addEventListener('pointercancel', function () { pan = null; });
 }
 
 function initFloatPanelDrag(id) {
@@ -895,7 +926,8 @@ function syncFocusedOpenBag() {
 function syncFloatRootAria() {
     const root = $('inventoryFloatRoot');
     if (!root) return;
-    root.setAttribute('aria-hidden', openBags.size ? 'false' : 'true');
+    const browseOpen = browseUi && browseUi.isAnyOpen && browseUi.isAnyOpen();
+    root.setAttribute('aria-hidden', (openBags.size || browseOpen) ? 'false' : 'true');
 }
 
 function removeOpenBagWindow(uid) {
@@ -1084,6 +1116,21 @@ function readBagView(r) {
 }
 
 const itemCatalog = new Map();
+let vocationClasses = [];
+
+function loadVocationSprites() {
+    if (typeof fetch === 'undefined') return;
+    fetch('/content/classes-ui.json')
+        .then(function (res) {
+            if (!res.ok) return null;
+            return res.json();
+        })
+        .then(function (data) {
+            if (!data || !Array.isArray(data.classes)) return;
+            vocationClasses = data.classes;
+        })
+        .catch(function () {});
+}
 
 function loadItemCatalog() {
     if (typeof fetch === 'undefined') return;
@@ -1210,7 +1257,7 @@ function onDragOver(ev) {
     if (!currentDrag) return;
     ev.preventDefault();
     if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-    ev.currentTarget.classList.add('drag-over');
+    setDragOver(ev.currentTarget);
 }
 
 function onDragLeave(ev) {
@@ -1239,23 +1286,154 @@ function onDragEnd(ev) {
     });
 }
 
+function setDragOver(el) {
+    if (typeof document === 'undefined') return;
+    const nodes = document.querySelectorAll('.drag-over');
+    for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i] !== el) nodes[i].classList.remove('drag-over');
+    }
+    if (el && el.classList) el.classList.add('drag-over');
+}
+
+function catalogMeta(item) {
+    if (!item || !item.id) return null;
+    return itemCatalog.get(item.id) || null;
+}
+
+function itemInOpenContainer(containerUid, index) {
+    if (index == null || !containerUid) return null;
+    if (bag && bag.containerId === containerUid) return slotAt(bag, index);
+    const rec = openBags.get(containerUid);
+    if (rec && rec.view) return slotAt(rec.view, index);
+    return null;
+}
+
+function containerHitFromTarget(target) {
+    if (!target || typeof target.closest !== 'function') return null;
+    if (target.closest('#loot-panel, #npc-dialog, #npc-shop')) return null;
+    const bagWindow = target.closest('.inv-float-panel[data-container-uid], .inv-float-panel[data-open-bag-uid]');
+    const sidebar = target.closest('.game-backpack-panel');
+    const surface = bagWindow || sidebar;
+    if (!surface) return null;
+    let surfaceUid = '';
+    if (bagWindow) {
+        surfaceUid = bagWindow.getAttribute('data-container-uid') || bagWindow.getAttribute('data-open-bag-uid') || '';
+    } else {
+        surfaceUid = (bag && bag.containerId) || 'root';
+    }
+    if (!surfaceUid) surfaceUid = 'root';
+    const slot = target.closest('.backpack-slot, .inv-slot');
+    let slotIndex = null;
+    let slotItem = null;
+    let slotEl = null;
+    if (slot && typeof surface.contains === 'function' && surface.contains(slot)) {
+        const raw = slot.getAttribute('data-slot-index');
+        if (raw != null && raw !== '') {
+            slotIndex = raw | 0;
+            const cid = slot.getAttribute('data-container-uid') || surfaceUid;
+            if (cid) surfaceUid = cid;
+            slotItem = itemInOpenContainer(surfaceUid, slotIndex);
+            if (!slotItem && slot.classList && slot.classList.contains('is-container')) {
+                slotItem = {
+                    id: slot.getAttribute('data-item-id') || '',
+                    flags: 1
+                };
+            }
+            slotEl = slot;
+        }
+    }
+    return {
+        surfaceUid: surfaceUid,
+        slotIndex: slotIndex,
+        slotItem: slotItem,
+        slotMeta: catalogMeta(slotItem),
+        surfaceEl: surface,
+        slotEl: slotEl
+    };
+}
+
+function modifiersFromEvent(ev) {
+    return {
+        shift: !!(ev && ev.shiftKey),
+        ctrl: !!(ev && (ev.ctrlKey || ev.metaKey)),
+        moveStack: !!(mouse && mouse.moveStack)
+    };
+}
+
+function confirmPlannedAmount(plan, n) {
+    if (!plan || !ContainerDrop) return;
+    send(C2S.MOVE_ITEM, encodeMoveItem(plan.from, plan.to, ContainerDrop.wireCount(plan.total, n)));
+}
+
+function applyPlannedDrop(plan, item) {
+    if (!plan || plan.type === 'NONE') return;
+    if (plan.type === 'EQUIP' && !plan.slot) return;
+    if (plan.type === 'EQUIP') {
+        send(C2S.EQUIP, encodeEquip(plan.containerId, plan.index | 0, plan.slot));
+        return;
+    }
+    if (plan.type === 'MODAL') {
+        showStackSplitModal({
+            max: plan.max,
+            item: item,
+            label: itemLabel(item && item.id),
+            onConfirm: function (n) { confirmPlannedAmount(plan, n); }
+        });
+        return;
+    }
+    if (plan.type === 'MOVE_ITEM') {
+        send(C2S.MOVE_ITEM, encodeMoveItem(plan.from, plan.to, plan.count | 0));
+    }
+}
+
+function highlightDropTarget(under) {
+    if (!under || typeof under.closest !== 'function') {
+        setDragOver(null);
+        return;
+    }
+    const hit = containerHitFromTarget(under);
+    if (hit && ContainerDrop) {
+        const dest = ContainerDrop.resolveContainerDestination({
+            surfaceUid: hit.surfaceUid,
+            slotIndex: hit.slotIndex,
+            slotItem: hit.slotItem,
+            slotMeta: hit.slotMeta,
+            drag: currentDrag
+        });
+        const el = dest && dest.highlight === 'slot' && hit.slotEl ? hit.slotEl : hit.surfaceEl;
+        setDragOver(el);
+        return;
+    }
+    setDragOver(under.closest('.slot-item, .action-bar-slot, [data-eq-slot]'));
+}
+
 function onEquipDrop(ev, targetSlotKey) {
     ev.preventDefault();
     ev.currentTarget.classList.remove('drag-over');
     if (!currentDrag) return;
-    if (currentDrag.kind === 'container') {
-        send(C2S.EQUIP, encodeEquip(currentDrag.containerId, currentDrag.slotIndex, targetSlotKey));
-    } else if (currentDrag.kind === 'equipment' && currentDrag.slot !== targetSlotKey) {
-        send(C2S.MOVE_ITEM, encodeMoveItem(
-            { kind: 'equipment', slot: currentDrag.slot },
-            { kind: 'equipment', slot: targetSlotKey },
-            0
-        ));
+    if (currentDrag.kind === 'ground' && !groundByUid.has(currentDrag.uid)) {
+        onDragEnd();
+        return;
     }
+    const equipped = equipment[targetSlotKey];
+    const plan = ContainerDrop ? ContainerDrop.planDrop({
+        drag: currentDrag,
+        dragMeta: catalogMeta(currentDrag.item),
+        paperdoll: {
+            targetSlot: targetSlotKey,
+            equippedItem: equipped || null,
+            equippedMeta: catalogMeta(equipped)
+        },
+        modifiers: modifiersFromEvent(ev)
+    }) : null;
+    applyPlannedDrop(plan, currentDrag.item);
     onDragEnd();
 }
 
 function resolveStackMoveAmount(opts) {
+    if (ContainerDrop && ContainerDrop.resolveStackMoveAmount) {
+        return ContainerDrop.resolveStackMoveAmount(opts);
+    }
     const o = opts || {};
     let count = Math.floor(Number(o.count));
     if (!Number.isFinite(count) || count < 1) count = 1;
@@ -1346,7 +1524,9 @@ function moveItemWithSplit(from, to, item, ev) {
         moveStack: !!(mouse && mouse.moveStack)
     });
     function go(n) {
-        const sendCount = (n >= count) ? 0 : n;
+        const sendCount = ContainerDrop
+            ? ContainerDrop.wireCount(count, n)
+            : ((n >= count) ? 0 : n);
         send(C2S.MOVE_ITEM, encodeMoveItem(from, to, sendCount));
     }
     if (decision.kind === 'amount') {
@@ -1361,35 +1541,26 @@ function moveItemWithSplit(from, to, item, ev) {
     });
 }
 
-function onContainerDrop(ev, targetContainerId, targetIndex) {
+function onContainerDrop(ev) {
     ev.preventDefault();
-    ev.currentTarget.classList.remove('drag-over');
+    if (ev.currentTarget && ev.currentTarget.classList) ev.currentTarget.classList.remove('drag-over');
     if (!currentDrag) return;
-    if (currentDrag.kind === 'ground') {
-        if (!groundByUid.has(currentDrag.uid)) {
-            onDragEnd();
-            return;
-        }
-        moveItemWithSplit(
-            tileMoveLoc(currentDrag.x, currentDrag.y, currentDrag.z, currentDrag.stackIndex),
-            { kind: 'container', containerUid: targetContainerId, index: targetIndex },
-            currentDrag.item,
-            ev
-        );
-    } else if (currentDrag.kind === 'equipment') {
-        send(C2S.UNEQUIP, encodeUnequip(currentDrag.slot));
-    } else if (currentDrag.kind === 'container') {
-        if (currentDrag.containerId === targetContainerId && currentDrag.slotIndex === targetIndex) {
-            onDragEnd();
-            return;
-        }
-        moveItemWithSplit(
-            { kind: 'container', containerUid: currentDrag.containerId, index: currentDrag.slotIndex },
-            { kind: 'container', containerUid: targetContainerId, index: targetIndex },
-            currentDrag.item,
-            ev
-        );
+    const hit = containerHitFromTarget(ev.target);
+    if (!hit || !ContainerDrop) {
+        onDragEnd();
+        return;
     }
+    if (currentDrag.kind === 'ground' && !groundByUid.has(currentDrag.uid)) {
+        onDragEnd();
+        return;
+    }
+    const plan = ContainerDrop.planDrop({
+        drag: currentDrag,
+        dragMeta: catalogMeta(currentDrag.item),
+        container: hit,
+        modifiers: modifiersFromEvent(ev)
+    });
+    applyPlannedDrop(plan, currentDrag.item);
     onDragEnd();
 }
 
@@ -1571,12 +1742,113 @@ function applyInventoryIntents(intents, ctx) {
     return type;
 }
 
-function enableAutoChaseAndTarget(id) {
-    autoChase = true;
-    saveAutoChase(true);
+function setAutoChase(on) {
+    autoChase = !!on;
+    saveAutoChase(autoChase);
     const box = $('auto-chase');
-    if (box) box.checked = true;
+    if (box) box.checked = autoChase;
+    if (autoChase) pumpChase();
+    else if (chaseWalk) stopWalk();
+}
+
+function enableAutoChaseAndTarget(id) {
+    setAutoChase(true);
     selectTarget(id);
+}
+
+function hotkeyToken(ev) {
+    if (typeof EngineActionBarAssign !== 'undefined' && EngineActionBarAssign.eventToHotkeyString) {
+        return EngineActionBarAssign.eventToHotkeyString(ev) || '';
+    }
+    return '';
+}
+
+function generalAction(token) {
+    if (!token || !GeneralHotkeys || !generalHotkeys) return '';
+    return GeneralHotkeys.match(generalHotkeys, token) || '';
+}
+
+function publishGeneralHotkeys() {
+    const ui = typeof EngineClientWindow !== 'undefined' && EngineClientWindow.attached
+        ? EngineClientWindow.attached()
+        : null;
+    if (!ui || typeof ui.setGeneralHotkeys !== 'function' || !GeneralHotkeys) return;
+    ui.setGeneralHotkeys({
+        rows: GeneralHotkeys.rows(generalHotkeys),
+        capturing: generalCapture,
+        onAdd: function (id) { captureGeneral(id, -1); },
+        onReplace: function (id, index) { captureGeneral(id, index); },
+        onRemove: function (id, index) {
+            generalHotkeys = GeneralHotkeys.removeAt(generalHotkeys, id, index);
+            persistGeneralHotkeys();
+        },
+        onCancel: function () {
+            if (typeof EngineActionBarAssign !== 'undefined' && EngineActionBarAssign.cancelHotkeyCapture) {
+                EngineActionBarAssign.cancelHotkeyCapture();
+            }
+            generalCapture = null;
+            publishGeneralHotkeys();
+        }
+    });
+}
+
+function persistGeneralHotkeys() {
+    generalCapture = null;
+    if (typeof saveGeneralHotkeys === 'function') saveGeneralHotkeys(generalHotkeys);
+    publishGeneralHotkeys();
+}
+
+function commitGeneralHotkey(actionId, index, hotkey) {
+    if (!GeneralHotkeys) return;
+    generalHotkeys = GeneralHotkeys.setKey(generalHotkeys, actionId, hotkey, index);
+    persistGeneralHotkeys();
+}
+
+function captureGeneral(actionId, index) {
+    const Assign = typeof EngineActionBarAssign !== 'undefined' ? EngineActionBarAssign : null;
+    if (!Assign || typeof Assign.beginHotkeyCapture !== 'function') return;
+    generalCapture = { actionId: actionId, index: index };
+    publishGeneralHotkeys();
+    Assign.beginHotkeyCapture(function (hotkey) {
+        generalCapture = null;
+        if (!hotkey) {
+            publishGeneralHotkeys();
+            return;
+        }
+        const Bars = typeof EngineActionBars !== 'undefined' ? EngineActionBars : null;
+        const hit = Bars && typeof Bars.findHotkeySlot === 'function' ? Bars.findHotkeySlot(hotkey) : null;
+        if (hit) {
+            const where = (hit.barId | 0) === 1
+                ? ('slot ' + ((hit.index | 0) + 1))
+                : ('bar ' + hit.barId + ' slot ' + ((hit.index | 0) + 1));
+            if (typeof Assign.openOverwriteConfirm === 'function') {
+                Assign.openOverwriteConfirm(
+                    'Already on <strong>' + where + '</strong>. Ok steals the binding.',
+                    function () {
+                        if (Bars.clearSlotHotkey) Bars.clearSlotHotkey(hit.barId, hit.index);
+                        commitGeneralHotkey(actionId, index, hotkey);
+                    }
+                );
+            }
+            publishGeneralHotkeys();
+            return;
+        }
+        commitGeneralHotkey(actionId, index, hotkey);
+    }, { allowEscape: true });
+}
+
+function loadGeneralHotkeyDoc() {
+    if (!GeneralHotkeys || typeof loadGeneralHotkeys !== 'function') {
+        publishGeneralHotkeys();
+        return;
+    }
+    loadGeneralHotkeys().then(function (row) {
+        generalHotkeys = GeneralHotkeys.normalize(row);
+        publishGeneralHotkeys();
+    }).catch(function () {
+        generalHotkeys = GeneralHotkeys.defaults();
+        publishGeneralHotkeys();
+    });
 }
 
 function applyCombatIntents(intents, row, clientX, clientY) {
@@ -1684,7 +1956,7 @@ function paintGrid(el, view, selectedIndex, kind) {
             slot.setAttribute('draggable', 'true');
             slot.dataset.itemId = it.id;
             if (i === selectedIndex) slot.classList.add('is-selected');
-            if (it.flags & 1) slot.classList.add('is-container');
+            if (equipItemIsContainer(it)) slot.classList.add('is-container');
 
             const tooltip = formatItemTooltip(it.id, it.count);
             slot.title = tooltip;
@@ -1824,12 +2096,13 @@ function paintGrid(el, view, selectedIndex, kind) {
             }
             onSlotDragStart(ev, containerId, i, it);
         };
-        slot.ondragover = onDragOver;
-        slot.ondragleave = onDragLeave;
-        slot.ondrop = function (ev) {
-            onContainerDrop(ev, containerId, i);
-        };
         slot.ondragend = onDragEnd;
+    }
+}
+
+function refreshActionBarSlots() {
+    if (typeof EngineActionBars !== 'undefined' && typeof EngineActionBars.refreshSlots === 'function') {
+        EngineActionBars.refreshSlots();
     }
 }
 
@@ -1853,6 +2126,7 @@ function renderBag() {
         }
     });
     syncFloatRootAria();
+    refreshActionBarSlots();
 }
 
 function renderEquipment() {
@@ -2003,6 +2277,7 @@ function renderEquipment() {
     if (soulEl) soulEl.textContent = '100';
     const statusBar = $('activeEqStatusBar');
     if (statusBar) statusBar.hidden = true;
+    refreshActionBarSlots();
 }
 
 
@@ -2828,15 +3103,18 @@ function drawPlacement(tileX, tileY, placement, genre, targetCtx, originX, origi
 
 function entityImage(ent) {
     const genre = visualGenre();
-    const ids = [];
-    if (ent.look) ids.push(ent.look);
-    if (ent.vocation && ids.indexOf(ent.vocation) < 0) ids.push(ent.vocation);
-    if (!isCreatureEntity(ent) && !isNpcEntity(ent) && ids.indexOf('adventurer') < 0) ids.push('adventurer');
-    for (let i = 0; i < ids.length; i++) {
+    const player = !isCreatureEntity(ent) && !isNpcEntity(ent);
+    const candidates = Sprites.entitySpriteCandidates(ent, {
+        classes: vocationClasses,
+        genre: genre,
+        player: player
+    });
+    for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
         const opts = {
-            genre: genre,
+            genre: c.genre,
             kind: 'creatures',
-            id: ids[i],
+            id: c.id,
             variant: Sprites.DEFAULT_ENTITY_VARIANT
         };
         Sprites.prefetch(opts);
@@ -3220,6 +3498,15 @@ function selectTarget(id) {
     else if (chaseWalk) stopWalk();
 }
 
+function isDiagonalDir(dir) {
+    const step = Path && Path.DIRS ? Path.DIRS[dir] : null;
+    return !!(step && step.dx && step.dy);
+}
+
+function walkGapMs() {
+    return stepMs * (walkGapScale > 1 ? DIAGONAL_STEP_FACTOR : 1);
+}
+
 function sendKeyboardStep(dir) {
     if (!self || downed || dir == null) return false;
     if (walkBusy) return false;
@@ -3230,6 +3517,9 @@ function sendKeyboardStep(dir) {
     // Known blocked dest: skip send so walkBusy is not held for REJECT BLOCKED.
     const t = viewport ? Path.tileAt(viewport, nx, ny) : null;
     if (t != null && !isWalkable(nx, ny)) return false;
+    if (step.dx && step.dy && Path.diagonalClosed(
+        self.x | 0, self.y | 0, step.dx, step.dy, isWalkable
+    )) return false;
     walkBusy = true;
     send(C2S.MOVE_STEP, Uint8Array.of(dir));
     return true;
@@ -3237,9 +3527,11 @@ function sendKeyboardStep(dir) {
 
 function pumpKeyboardWalk(now) {
     if (!self || downed) return;
-    const dir = keyWalk.readyDir(now, stepMs);
+    const dir = keyWalk.readyDir(now, walkGapMs());
     if (dir == null) return;
-    if (sendKeyboardStep(dir)) keyWalk.markEmitted(now);
+    if (!sendKeyboardStep(dir)) return;
+    keyWalk.markEmitted(now);
+    walkGapScale = isDiagonalDir(dir) ? DIAGONAL_STEP_FACTOR : 1;
 }
 
 function runPending() {
@@ -3248,7 +3540,10 @@ function runPending() {
     if (!p) return;
     if (p.type === 'TALK') send(C2S.TALK, u32buf(p.id));
     else if (p.type === 'OPEN_CORPSE') send(C2S.OPEN_CORPSE, u32buf(p.id));
-    else if (p.type === 'USE' || p.type === 'OPEN_CONTAINER') {
+    else if (p.type === 'BROWSE_FIELD') {
+        const ui = ensureBrowse();
+        if (ui) ui.arrive(p);
+    } else if (p.type === 'USE' || p.type === 'OPEN_CONTAINER') {
         send(C2S.USE, encodeTileUse(p.x, p.y, p.z));
     }
 }
@@ -3525,6 +3820,89 @@ function placeCombatSortDropdown() {
     placeCtxMenu(el, r.right, r.bottom + 2);
 }
 
+function beginBrowseDrag(info, ev) {
+    if (!info || !ev) return;
+    groundDrag = {
+        uid: info.uid,
+        x: info.x | 0,
+        y: info.y | 0,
+        z: info.z | 0,
+        stackIndex: info.stackIndex | 0,
+        item: info.item || { id: '', count: 1 },
+        startX: ev.clientX,
+        startY: ev.clientY,
+        dragging: false,
+        browse: true
+    };
+    currentDrag = {
+        kind: 'ground',
+        uid: groundDrag.uid,
+        x: groundDrag.x,
+        y: groundDrag.y,
+        z: groundDrag.z,
+        stackIndex: groundDrag.stackIndex,
+        item: groundDrag.item,
+        browse: true
+    };
+}
+
+function ensureBrowse() {
+    if (browseUi || !BrowseField) return browseUi;
+    browseUi = BrowseField.attach({
+        getPlayer: function () { return self; },
+        nearestApproach: function (player, tile, range, walkable) {
+            return Path.nearestApproach(player, tile, range, walkable);
+        },
+        isWalkable: isWalkable,
+        sendBrowse: function (x, y, z) {
+            send(C2S.BROWSE_FIELD, encodeBrowseField(x, y, z));
+        },
+        sendClose: function (x, y, z) {
+            send(C2S.BROWSE_FIELD_CLOSE, encodeBrowseField(x, y, z));
+        },
+        fct: fct,
+        startWalk: startWalk,
+        floatRoot: inventoryFloatRoot,
+        wireDrag: wireFloatHeaderDrag,
+        raise: bringFloatToFront,
+        place: function (el, tile) {
+            placeNewFloat(el, { origin: 'canvas', tile: tile });
+        },
+        syncAria: syncFloatRootAria,
+        menuEl: function () { return $('ctx-menu'); },
+        placeMenu: placeCtxMenu,
+        hideChrome: hideCtx,
+        showLook: function (x, y, id, count) { showItemPopover(x, y, id, count, true); },
+        bindLook: bindItemPopover,
+        spriteUrl: function (id) { return resolveItemSpriteUrl(id, visualGenre()); },
+        itemLabel: itemLabel,
+        beginDrag: beginBrowseDrag,
+        useItem: function (uid) {
+            if (!uid) return;
+            send(C2S.USE_ITEM, encodeContainerSlot(uid, OPEN_BAG_SELF_INDEX));
+        },
+        openBag: function (uid, itemId) {
+            if (!uid) return;
+            requestOpenBag(uid, OPEN_BAG_SELF_INDEX, itemId || '', null);
+        },
+        pickup: function (rec, it, ev) {
+            if (!rec || !it) return;
+            moveItemWithSplit(
+                tileMoveLoc(rec.x, rec.y, rec.z, it.stackIndex | 0),
+                backpackMoveDest(),
+                { id: it.id, count: it.count | 0 },
+                ev || null
+            );
+        },
+        armUseWith: function (it) {
+            if (!it || !it.id) return;
+            pendingUseWith = it.id;
+            fct('Use ' + itemLabel(it.id) + ' with…');
+        }
+    });
+    return browseUi;
+}
+
 function showCanvasMenu(hit, clientX, clientY) {
     const el = $('ctx-menu');
     if (!el) return;
@@ -3559,6 +3937,9 @@ function showCanvasMenu(hit, clientX, clientY) {
                 applyIntents([Mouse.groundOpenBagIntent(hit, hit.groundUseUid)]);
             } else if (entry.action === 'PICKUP' && hit.pickableUid) {
                 applyIntents([Mouse.groundPickupIntent(hit, hit.pickableUid, hit.pickableStackIndex)]);
+            } else if (entry.action === 'BROWSE_FIELD') {
+                const ui = ensureBrowse();
+                if (ui) ui.chooseTile(hit.x, hit.y, hit.z);
             } else if (entry.action === 'USE_STAIR') {
                 applyIntents([{ type: 'USE_STAIR' }]);
             } else if (entry.action === 'WALK') {
@@ -3743,15 +4124,7 @@ function updateGroundDragAvatar(ev) {
     const under = typeof document !== 'undefined'
         ? document.elementFromPoint(ev.clientX, ev.clientY)
         : null;
-    const targetSlot = under && typeof under.closest === 'function'
-        ? under.closest('.inv-slot, .backpack-slot, .slot-item, [data-slot-index], [data-inv-index], [data-slot], [data-eq-slot], .action-bar-slot')
-        : null;
-    document.querySelectorAll('.drag-over').forEach(function (el) {
-        if (el !== targetSlot) el.classList.remove('drag-over');
-    });
-    if (targetSlot) {
-        targetSlot.classList.add('drag-over');
-    }
+    highlightDropTarget(under);
 }
 
 function onCanvasPointerMove(ev) {
@@ -3785,54 +4158,56 @@ function finishCanvasGroundDrag(ev) {
     const drag = groundDrag;
     groundDrag = null;
     removeGroundDragAvatar();
+    setDragOver(null);
     if (!drag || !drag.dragging) return false;
-    if (!groundByUid.has(drag.uid)) return true;
     const under = typeof document !== 'undefined'
         ? document.elementFromPoint(ev.clientX, ev.clientY)
         : null;
+    if (under && browseUi && browseUi.isBrowseSurface(under)) return true;
+    if (!groundByUid.has(drag.uid) && !drag.browse) return true;
     if (under && typeof EngineActionBars !== 'undefined'
         && typeof EngineActionBars.tryHandleSlotDrop === 'function') {
         if (drag.item && drag.item.id && EngineActionBars.tryHandleSlotDrop(under, drag.item.id)) {
             return true;
         }
     }
-    if (under && typeof under.closest === 'function') {
-        const slot = under.closest('.inv-slot, .backpack-slot, .slot-item, [data-slot-index], [data-inv-index], [data-slot], [data-eq-slot]');
-        if (slot) {
-            const idx = slot.getAttribute('data-slot-index') || slot.getAttribute('data-inv-index');
-            const eq = slot.getAttribute('data-slot') || slot.getAttribute('data-eq-slot');
-            const cid = slot.getAttribute('data-container-uid') || slot.getAttribute('data-container-id') || bag.containerId || 'root';
-            if (eq) {
-                moveItemWithSplit(
-                    tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
-                    { kind: 'equipment', slot: eq },
-                    drag.item,
-                    ev
-                );
-                return true;
-            }
-            if (idx != null) {
-                moveItemWithSplit(
-                    tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
-                    { kind: 'container', containerUid: cid, index: idx | 0 },
-                    drag.item,
-                    ev
-                );
-                return true;
-            }
-        }
-        const panel = under.closest('.game-backpack-panel, #backpackGrid, #backpackScroll, .inv-float-panel, #inventoryFloatRoot');
-        if (panel) {
-            const floatCont = under.closest('.inv-float-panel');
-            const targetUid = (floatCont && floatCont.getAttribute('data-container-uid')) || bag.containerId || 'root';
-            moveItemWithSplit(
-                tileMoveLoc(drag.x, drag.y, drag.z, drag.stackIndex),
-                { kind: 'container', containerUid: targetUid, index: 0 },
-                drag.item,
-                ev
-            );
+    if (under && typeof under.closest === 'function' && ContainerDrop) {
+        const payload = {
+            kind: 'ground',
+            uid: drag.uid,
+            x: drag.x,
+            y: drag.y,
+            z: drag.z,
+            stackIndex: drag.stackIndex,
+            item: drag.item
+        };
+        const equipEl = under.closest('#activeEquipmentCard .slot-item, .equipment-card .slot-item');
+        if (equipEl) {
+            const eq = equipEl.getAttribute('data-slot') || equipEl.getAttribute('data-eq-slot');
+            const equipped = eq ? equipment[eq] : null;
+            applyPlannedDrop(ContainerDrop.planDrop({
+                drag: payload,
+                dragMeta: catalogMeta(drag.item),
+                paperdoll: {
+                    targetSlot: eq,
+                    equippedItem: equipped || null,
+                    equippedMeta: catalogMeta(equipped)
+                },
+                modifiers: modifiersFromEvent(ev)
+            }), drag.item);
             return true;
         }
+        const hit = containerHitFromTarget(under);
+        if (hit) {
+            applyPlannedDrop(ContainerDrop.planDrop({
+                drag: payload,
+                dragMeta: catalogMeta(drag.item),
+                container: hit,
+                modifiers: modifiersFromEvent(ev)
+            }), drag.item);
+            return true;
+        }
+        if (under.closest('#loot-panel, #npc-dialog, #npc-shop')) return true;
     }
     const dest = canvasTile(ev);
     if (!dest) return true;
@@ -3948,6 +4323,12 @@ function onCanvasPointerUp(ev) {
             currentDrag = null;
             return;
         }
+        if (drag.browse) {
+            groundDrag = null;
+            currentDrag = null;
+            removeGroundDragAvatar();
+            return;
+        }
         const hit = drag.hit;
         groundDrag = null;
         currentDrag = null;
@@ -3982,15 +4363,14 @@ function onFrame(bytes, tokenHex) {
         lastTick = r.u32();
         stepMs = Math.max(50, Math.round((1000 / Math.max(1, ups)) * 4));
         log('HELLO v' + ver + ' ups=' + ups + ' tick=' + lastTick);
-        const upsEl = $('stat-ups');
-        if (upsEl) upsEl.textContent = String(ups);
         send(C2S.ENTER, hexToBytes(tokenHex));
         return;
     }
     if (opcode === S2C.ENTER_WORLD) {
+        skillProgress = null;
         self = {
             id: r.u32(), name: r.str(), vocation: r.str(), level: r.u16(),
-            experience: r.u32(), hp: r.u16(), hpMax: r.u16(), mp: r.u16(), mpMax: r.u16(),
+            experience: r.u64(), hp: r.u32(), hpMax: r.u32(), mp: r.u32(), mpMax: r.u32(),
             x: r.i16(), y: r.i16(), z: r.i8(), townId: r.u16()
         };
         self.look = self.vocation || 'adventurer';
@@ -4009,6 +4389,7 @@ function onFrame(bytes, tokenHex) {
         if (typeof EngineActionBars !== 'undefined' && EngineActionBars.onEnter) {
             EngineActionBars.onEnter({
                 characterId: self.id,
+                name: self.name,
                 vocation: self.vocation
             });
         }
@@ -4029,8 +4410,9 @@ function onFrame(bytes, tokenHex) {
     if (opcode === S2C.MOVE) {
         const id = r.u32(), x = r.i16(), y = r.i16(), z = r.i8(), dir = r.u8();
         if (self && id === self.id) {
-            const prevZ = self.z | 0;
+            const prev = { x: self.x | 0, y: self.y | 0, z: self.z | 0 };
             beginSlide(self, x, y, z);
+            if (browseUi) browseUi.onPlayerMoved(prev, self);
             applyDirFacing(self, dir);
             setHud();
             walkBusy = false;
@@ -4039,7 +4421,7 @@ function onFrame(bytes, tokenHex) {
                 if (self.x === walkDest.x && self.y === walkDest.y) {
                     stopWalk(true, true);
                     runPending();
-                } else if ((z | 0) !== prevZ) {
+                } else if ((z | 0) !== prev.z) {
                     stopWalk(false, true);
                     pumpChase();
                 }
@@ -4060,17 +4442,20 @@ function onFrame(bytes, tokenHex) {
         const echo = r.u32();
         r.u32();
         lastTick = r.u32();
-        const rtt = Math.max(0, Date.now() - echo);
+        const rtt = rttMs(Date.now(), echo);
         const rttEl = $('stat-rtt');
         if (rttEl) rttEl.textContent = rtt + 'ms';
-        const tickEl = $('stat-tick');
-        if (tickEl) tickEl.textContent = String(lastTick);
         return;
     }
     if (opcode === S2C.REJECT) {
         const seq = r.u32();
         const reason = r.u8();
         log('rejected seq=' + seq + ' reason=' + reason, 'err');
+        const groundIdx = groundRejectSeqs.indexOf(seq);
+        if (groundIdx >= 0) {
+            groundRejectSeqs.splice(groundIdx, 1);
+            if (reason === REASON.OUT_OF_RANGE) fct('There is no way.');
+        }
         if (reason === REASON.BUSY) {
             walkBusy = false;
             if (keyWalk.isHeld()) pumpKeyboardWalk(nowMs());
@@ -4091,7 +4476,7 @@ function onFrame(bytes, tokenHex) {
     if (opcode === S2C.APPEAR) {
         const p = typeof decodeAppear === 'function' ? decodeAppear(r.b.subarray(r.o)) : {
             id: r.u32(), name: r.str(), x: r.i16(), y: r.i16(), z: r.i8(),
-            hp: r.u16(), hpMax: r.u16(), flags: r.u8(),
+            hp: r.u32(), hpMax: r.u32(), flags: r.u8(),
             look: r.o < r.b.length ? r.str() : '',
             dir: r.o < r.b.length ? r.u8() : 0
         };
@@ -4120,7 +4505,7 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.STATS) {
-        const id = r.u32(), hp = r.u16(), hpMax = r.u16(), mp = r.u16(), mpMax = r.u16();
+        const id = r.u32(), hp = r.u32(), hpMax = r.u32(), mp = r.u32(), mpMax = r.u32();
         if (self && id === self.id) {
             self.hp = hp; self.hpMax = hpMax; self.mp = mp; self.mpMax = mpMax;
             if (hp > 0 && downed) setDeath(false);
@@ -4330,14 +4715,14 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.EXP) {
-        const total = r.u32(), gained = r.u32();
-        if (self) self.experience = total;
-        if (r.o + 2 <= r.b.length) {
-            const level = r.u16();
-            if (self) self.level = level;
+        const total = r.u64(), gained = r.u64(), level = r.u16();
+        if (self) {
+            self.experience = total;
+            self.level = level;
         }
         log('exp +' + gained + ' (' + total + ')', 'ok');
         setHud();
+        renderSkills();
         if (self && gained > 0 && CombatFx) {
             CombatFx.pushFct({
                 x: self.x,
@@ -4430,6 +4815,12 @@ function onFrame(bytes, tokenHex) {
         renderSkills();
         return;
     }
+    if (opcode === S2C.SKILL_PROGRESS) {
+        skillProgress = {};
+        for (let i = 0; i < SKILL_ORDER.length; i++) skillProgress[SKILL_ORDER[i]] = r.u64();
+        renderSkills();
+        return;
+    }
     if (opcode === S2C.SAY) {
         const msg = typeof decodeSay === 'function' ? decodeSay(r.b.subarray(r.o)) : {
             text: r.str(),
@@ -4504,6 +4895,14 @@ function onFrame(bytes, tokenHex) {
         draw();
         return;
     }
+    if (opcode === S2C.BROWSE_FIELD) {
+        const msg = typeof decodeBrowseField === 'function'
+            ? decodeBrowseField(r.b.subarray(r.o))
+            : null;
+        const ui = ensureBrowse();
+        if (ui && msg) ui.applySnapshot(msg);
+        return;
+    }
     if (opcode === S2C.FIELD_GONE) {
         const g = typeof decodeFieldGone === 'function' ? decodeFieldGone(r.b.subarray(r.o)) : {
             x: r.i16(),
@@ -4556,6 +4955,7 @@ function connect(cfg, tokenHex) {
     groundByUid = new Map();
     groundDrag = null;
     removeGroundDragAvatar();
+    if (browseUi) browseUi.reset();
     fields = new Map();
     pendingUseWith = null;
     seenAt = new Map();
@@ -4566,6 +4966,9 @@ function connect(cfg, tokenHex) {
     openCorpse = 0;
     targetId = 0;
     self = null;
+    if (typeof EngineClientWindow !== 'undefined' && EngineClientWindow.syncCharacter) {
+        EngineClientWindow.syncCharacter(null);
+    }
     viewport = null;
     visualLoader.reset();
     if (tilemapCache) tilemapCache.invalidate();
@@ -4593,21 +4996,6 @@ function connect(cfg, tokenHex) {
     }, 2000);
 }
 
-function syncMouseUi() {
-    const modeEl = $('mouse-mode');
-    const lootEl = $('loot-mode');
-    const talkEl = $('talk-right');
-    const stackEl = $('move-stack');
-    const lootWrap = $('loot-mode-wrap');
-    const talkWrap = $('talk-right-wrap');
-    if (modeEl) modeEl.value = String(mouse.mouseControlMode);
-    if (lootEl) lootEl.value = String(mouse.lootControlMode);
-    if (talkEl) talkEl.checked = mouse.talkOnRightClick;
-    if (stackEl) stackEl.checked = mouse.moveStack === true;
-    if (lootWrap) lootWrap.hidden = mouse.mouseControlMode !== 1;
-    if (talkWrap) talkWrap.hidden = mouse.mouseControlMode !== 0;
-}
-
 function cycleTarget(dir) {
     const list = combatRoster();
     if (!list.length) return;
@@ -4631,6 +5019,28 @@ function tickFps(now) {
     pumpKeyboardWalk(now);
     requestAnimationFrame(tickFps);
 }
+
+document.addEventListener('dragover', function (ev) {
+    if (!currentDrag) return;
+    if (browseUi && browseUi.isBrowseSurface(ev.target)) {
+        ev.preventDefault();
+        return;
+    }
+    highlightDropTarget(ev.target);
+    if (!containerHitFromTarget(ev.target)) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+});
+
+document.addEventListener('drop', function (ev) {
+    if (!currentDrag) return;
+    if (browseUi && browseUi.isBrowseSurface(ev.target)) {
+        ev.preventDefault();
+        return;
+    }
+    if (!containerHitFromTarget(ev.target)) return;
+    onContainerDrop(ev);
+});
 
 // Native OS menu off inside the play workspace (canvas, docks, bag, eq).
 // Capture preventDefault does not stop app RMB handlers. Header stays native.
@@ -4728,10 +5138,19 @@ window.addEventListener('pointercancel', function (ev) {
 window.addEventListener('keydown', function (ev) {
     if (!self || downed) return;
     if (KeyWalk.isTypingTarget && KeyWalk.isTypingTarget(ev.target)) return;
+    if (typeof EngineActionBarAssign !== 'undefined' && EngineActionBarAssign.isBusy && EngineActionBarAssign.isBusy()) return;
+    const token = hotkeyToken(ev);
+    const action = generalAction(token);
+    function owned() {
+        if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    }
     if (ev.key === 'Escape') {
+        // Settings closes itself. Escape does not close an open bag.
         ev.preventDefault();
-        keyWalk.reset();
-        stopWalk();
+        if (action === 'stopAutowalk') {
+            keyWalk.reset();
+            stopWalk();
+        }
         hideCtx();
         if (groundDrag) {
             groundDrag = null;
@@ -4741,6 +5160,33 @@ window.addEventListener('keydown', function (ev) {
         if (talkNpc) send(C2S.TALK_CLOSE, u32buf(talkNpc));
         return;
     }
+    if (action === 'stopAutowalk') {
+        ev.preventDefault();
+        keyWalk.reset();
+        stopWalk();
+        owned();
+        return;
+    }
+    if (action === 'targetNext' || action === 'targetPrev') {
+        ev.preventDefault();
+        cycleTarget(action === 'targetPrev' ? -1 : 1);
+        owned();
+        return;
+    }
+    if (action === 'toggleAutoChase') {
+        ev.preventDefault();
+        setAutoChase(!autoChase);
+        owned();
+        return;
+    }
+    const dir = token && GeneralHotkeys && GeneralHotkeys.moveDir
+        ? GeneralHotkeys.moveDir(token, generalHotkeys)
+        : null;
+    if (action && action.indexOf('move') === 0 && dir == null) {
+        ev.preventDefault();
+        owned();
+        return;
+    }
     if (ev.key === 'u' || ev.key === 'U') {
         ev.preventDefault();
         keyWalk.reset();
@@ -4748,23 +5194,23 @@ window.addEventListener('keydown', function (ev) {
         send(C2S.USE_STAIR, new Uint8Array(0));
         return;
     }
-    if (ev.code === 'Space') {
-        ev.preventDefault();
-        cycleTarget(ev.shiftKey ? -1 : 1);
-        return;
-    }
-    if (KeyWalk.dirOf(ev.code) == null) return;
+    if (dir == null) return;
     ev.preventDefault();
     const now = nowMs();
-    if (!keyWalk.keyDown(ev.code, now)) return;
+    if (!keyWalk.keyDown(token, now)) return;
     cancelClickWalk();
     pumpKeyboardWalk(now);
+    owned();
 });
 
 window.addEventListener('keyup', function (ev) {
-    if (KeyWalk.dirOf(ev.code) == null) return;
+    const token = hotkeyToken(ev);
+    const dir = token && GeneralHotkeys && GeneralHotkeys.moveDir
+        ? GeneralHotkeys.moveDir(token, generalHotkeys)
+        : KeyWalk.dirOf(ev.code);
+    if (dir == null) return;
     ev.preventDefault();
-    keyWalk.keyUp(ev.code);
+    keyWalk.keyUp(token || ev.code);
     if (!keyWalk.isHeld()) pumpChase();
 });
 
@@ -4983,50 +5429,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const leaveSide = $('leave-side');
     if (leave) leave.addEventListener('click', leaveWorld);
     if (leaveSide) leaveSide.addEventListener('click', leaveWorld);
-    const modeEl = $('mouse-mode');
-    const lootEl = $('loot-mode');
-    const talkEl = $('talk-right');
-    const chaseEl = $('auto-chase');
     const sortEl = $('combat-sort');
-    if (chaseEl) chaseEl.checked = autoChase;
     if (sortEl) sortEl.value = combatSort;
-    syncMouseUi();
-    if (modeEl) {
-        modeEl.addEventListener('change', function () {
-            mouse.mouseControlMode = Number(modeEl.value);
-            mouse = saveMouseControls(mouse);
-            syncMouseUi();
-        });
-    }
-    if (lootEl) {
-        lootEl.addEventListener('change', function () {
-            mouse.lootControlMode = Number(lootEl.value);
-            mouse = saveMouseControls(mouse);
-        });
-    }
-    if (talkEl) {
-        talkEl.addEventListener('change', function () {
-            mouse.talkOnRightClick = talkEl.checked;
-            mouse = saveMouseControls(mouse);
-        });
-    }
-    const stackEl = $('move-stack');
-    if (stackEl) {
-        stackEl.addEventListener('change', function () {
-            mouse.moveStack = stackEl.checked === true;
-            mouse = saveMouseControls(mouse);
-            if (typeof stackEl.blur === 'function') stackEl.blur();
-        });
-    }
-    if (chaseEl) {
-        chaseEl.addEventListener('change', function () {
-            autoChase = chaseEl.checked;
-            saveAutoChase(autoChase);
-            if (typeof chaseEl.blur === 'function') chaseEl.blur();
-            if (autoChase) pumpChase();
-            else if (chaseWalk) stopWalk();
-        });
-    }
     const sortBtn = $('combatSortBtn');
     const sortDropdown = $('combatSortDropdown');
     const sortItems = document.querySelectorAll('.combat-sort-item');
@@ -5122,12 +5526,42 @@ document.addEventListener('DOMContentLoaded', function () {
         document.addEventListener('mozfullscreenchange', onFsChange);
     }
 
-    const settingsBtn = $('openEngineSettingsBtn');
-    if (settingsBtn) {
-        settingsBtn.addEventListener('click', function () {
-            const eqDetails = $('equipment-details');
-            if (eqDetails) eqDetails.click();
+    if (typeof EngineClientWindow !== 'undefined' && EngineClientWindow.attach) {
+        const clientWindow = EngineClientWindow.attach({
+            document: document,
+            window: window,
+            place: FloatPlace,
+            getCharacter: function () { return self; },
+            root: inventoryFloatRoot()
         });
+        if (clientWindow && clientWindow.bindControls) {
+            clientWindow.bindControls({
+                mouse: mouse,
+                autoChase: autoChase,
+                onMouse: function (next) {
+                    mouse = saveMouseControls(next);
+                    return mouse;
+                },
+                onAutoChase: function (on) {
+                    setAutoChase(on);
+                }
+            });
+        }
+        loadGeneralHotkeyDoc();
+        if (typeof EngineActionBars !== 'undefined' && EngineActionBars.setGeneralBridge) {
+            EngineActionBars.setGeneralBridge({
+                labelFor: function (hotkey) {
+                    if (!GeneralHotkeys) return '';
+                    const id = GeneralHotkeys.match(generalHotkeys, hotkey);
+                    return id ? GeneralHotkeys.labelOf(id) : '';
+                },
+                release: function (hotkey) {
+                    if (!GeneralHotkeys) return;
+                    generalHotkeys = GeneralHotkeys.removeHotkey(generalHotkeys, hotkey);
+                    persistGeneralHotkeys();
+                }
+            });
+        }
     }
 
     if (typeof EngineActionBars !== 'undefined' && EngineActionBars.bindHost) {
@@ -5198,35 +5632,8 @@ document.addEventListener('DOMContentLoaded', function () {
     initSidebarPanels();
     renderEquipment();
     loadItemCatalog();
+    loadVocationSprites();
     reparentFloatRoot();
-    $('equipment-details') && $('equipment-details').addEventListener('click', function () {
-        const modal = $('profile-modal');
-        const body = $('profile-body');
-        const title = $('profile-title');
-        if (!modal || !body || !self) return;
-        title.textContent = self.name;
-        const lines = [
-            self.vocation + '  L' + self.level,
-            'HP ' + self.hp + '/' + self.hpMax,
-            'MP ' + self.mp + '/' + self.mpMax,
-            'Exp ' + (self.experience || 0)
-        ];
-        if (skills) {
-            SKILL_ROWS.forEach(function (row) {
-                lines.push(row.label + '  ' + (skills[row.key] != null ? skills[row.key] : '—'));
-            });
-        }
-        body.textContent = '';
-        lines.forEach(function (line) {
-            const p = document.createElement('p');
-            p.textContent = line;
-            body.appendChild(p);
-        });
-        modal.hidden = false;
-    });
-    $('profile-close') && $('profile-close').addEventListener('click', function () {
-        $('profile-modal').hidden = true;
-    });
     renderBag();
     const handoff = takePlayHandoff();
     if (!handoff || !handoff.token) {

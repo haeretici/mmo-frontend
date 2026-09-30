@@ -313,13 +313,15 @@ function testInventoryActions() {
     assert.ok(playJs.includes('function showStackSplitModal'), 'split-count drag modal');
     assert.ok(playJs.includes('function resolveStackMoveAmount'), 'split-count modifiers');
     assert.ok(playJs.includes('mouse.moveStack'), 'split drag reads moveStack pref');
-    assert.ok(playJs.includes("('move-stack')"), 'play.js wires the moveStack checkbox');
+    assert.ok(playJs.includes('bindControls'), 'play.js binds settings controls including moveStack');
     assert.ok(playJs.includes('function makeItemRow'), 'loot/shop rows use item sprites');
     assert.ok(playJs.includes("pin.kind === 'door' && (pin.flags & 1)"), 'closed door blocking bit matches server flags');
 
     const playHtml = fs.readFileSync(path.join(FRONTEND_ROOT, 'static/play.html'), 'utf8');
     assert.ok(playHtml.includes('id="item-popover"'), 'play.html has item-popover');
-    assert.ok(playHtml.includes('id="move-stack"'), 'play.html has move-stack checkbox');
+    const clientWindowJs = fs.readFileSync(path.join(FRONTEND_ROOT, 'static/js/client_window.js'), 'utf8');
+    assert.ok(clientWindowJs.includes("'move-stack'"), 'settings window has move-stack checkbox');
+    assert.ok(!playHtml.includes('id="move-stack"'), 'move-stack left the sidebar');
     const css = fs.readFileSync(APP_CSS, 'utf8');
     assert.ok(/\.item-popover\{[^}]*position:fixed/.test(css), 'item-popover is viewport-fixed');
     assert.ok(css.includes('.inv-stack-split-modal'), 'split modal CSS landed');
