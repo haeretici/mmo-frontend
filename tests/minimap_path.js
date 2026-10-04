@@ -73,6 +73,8 @@ async function main() {
     assert.ok(play.includes('MinimapPath'));
     assert.ok(play.includes('findOrthogonalPath'));
     assert.ok(play.includes('MOVE_STEP'));
+    assert.ok(play.includes('avoidHopPads'));
+    assert.ok(play.includes('hopPadAt'));
     assert.ok(!play.includes('indexedDB'));
 
     assert.deepStrictEqual(mp.findPath({ x: 0, y: 0 }, { x: 0, y: 0 }, open), []);
@@ -88,6 +90,34 @@ async function main() {
     const east = mp.findPath({ x: 2, y: 3 }, { x: 6, y: 3 }, open);
     assert.deepStrictEqual(east, [1, 1, 1, 1]);
     assert.deepStrictEqual(walkDirs({ x: 2, y: 3 }, east), { x: 6, y: 3 });
+
+    function stairAt(x, y) {
+        return x === 2 && y === 1;
+    }
+    function openBand(x, y) {
+        return y >= 0 && y <= 2 && x >= 0 && x <= 4;
+    }
+    const aroundStair = mp.findPath(
+        { x: 0, y: 1 },
+        { x: 4, y: 1 },
+        pw.avoidHopPads(openBand, stairAt, { x: 4, y: 1 })
+    );
+    assert.ok(aroundStair && aroundStair.length > 1);
+    let sx = 0;
+    let sy = 1;
+    for (let i = 0; i < aroundStair.length; i++) {
+        sx += mp.DIRS[aroundStair[i]].dx;
+        sy += mp.DIRS[aroundStair[i]].dy;
+        assert.ok(!(sx === 2 && sy === 1), 'A* does not enter the stair');
+    }
+    assert.strictEqual(sx, 4);
+    assert.strictEqual(sy, 1);
+    const ontoStair = mp.findPath(
+        { x: 0, y: 1 },
+        { x: 2, y: 1 },
+        pw.avoidHopPads(openBand, stairAt, { x: 2, y: 1 })
+    );
+    assert.deepStrictEqual(walkDirs({ x: 0, y: 1 }, ontoStair), { x: 2, y: 1 });
 
     function pinch(x, y) {
         if (x === 2 && y === 1) return false;

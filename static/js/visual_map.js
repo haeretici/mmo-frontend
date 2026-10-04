@@ -173,6 +173,40 @@
         return sl.cells[y * floor.width + x] | 0;
     }
 
+    // Stepping on these roles changes floor. Ladders stay until Use.
+    const HOP_ROLES = Object.freeze({
+        stairs_up: true,
+        stairs_down: true,
+        hole: true
+    });
+
+    function hopsOnStepRole(roleId) {
+        if (roleId == null || roleId === '') return false;
+        return HOP_ROLES[String(roleId)] === true;
+    }
+
+    /**
+     * True when any sub-layer on this cell is a stair or hole.
+     * Cells outside the loaded window are unknown and return false.
+     */
+    function hopPadAt(floor, worldX, worldY) {
+        if (!floor || !floor.present || !floor.subLayers || !floor.palette) return false;
+        const x = (worldX | 0) - (floor.originX | 0);
+        const y = (worldY | 0) - (floor.originY | 0);
+        if (x < 0 || y < 0 || x >= (floor.width | 0) || y >= (floor.height | 0)) return false;
+        const palette = floor.palette;
+        const width = floor.width | 0;
+        for (let i = 0; i < floor.subLayers.length; i++) {
+            const sl = floor.subLayers[i];
+            if (!sl || !sl.cells) continue;
+            const pIdx = sl.cells[y * width + x] | 0;
+            if (pIdx <= 0 || pIdx >= palette.length) continue;
+            const placement = palette[pIdx];
+            if (placement && hopsOnStepRole(placement.roleId)) return true;
+        }
+        return false;
+    }
+
     function createLoader(fetchFn) {
         const fetchImpl = fetchFn || (typeof fetch === 'function' ? fetch.bind(typeof window !== 'undefined' ? window : globalThis) : null);
         let floor = null;
@@ -471,6 +505,8 @@
         decodeWindow,
         collectWorldProps,
         paletteAt,
+        hopsOnStepRole,
+        hopPadAt,
         createLoader,
         createTilemapCache
     };

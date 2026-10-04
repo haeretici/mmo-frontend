@@ -96,6 +96,24 @@
     }
 
     /**
+     * Stairs and holes stay closed so a path to another tile goes around them.
+     * The goal itself stays open, so a click on that pad still walks onto it.
+     * Pass a null goal to close every pad (approach / chase stand tiles).
+     */
+    function avoidHopPads(isWalkable, isHop, goal) {
+        const hasGoal = !!(goal && goal.x != null && goal.y != null);
+        const gx = hasGoal ? (goal.x | 0) : 0;
+        const gy = hasGoal ? (goal.y | 0) : 0;
+        return function (x, y) {
+            const xx = x | 0;
+            const yy = y | 0;
+            if (hasGoal && xx === gx && yy === gy) return isWalkable(xx, yy);
+            if (typeof isHop === 'function' && isHop(xx, yy)) return false;
+            return isWalkable(xx, yy);
+        };
+    }
+
+    /**
      * Auto-chase stand-off. Canary player follow uses minTargetDist =
      * maxTargetDist = 1 for every vocation; weapon range is attack, not chase.
      */
@@ -139,6 +157,7 @@
         findOrthogonalPath,
         nearestApproach,
         chebyshev,
+        avoidHopPads,
         CHASE_APPROACH_RANGE
     };
 });

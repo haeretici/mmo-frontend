@@ -125,7 +125,21 @@ const keyWalk = KeyWalk.create({
     }
 });
 let buttonsDown = { left: false, right: false };
+// Each button latches on its own pointerdown. A chord omits pointerup for
+// the first button released, so that flag used to stick and the next RMB
+// was treated as LMB+RMB. mouseup of either button clears both flags.
+// pointerup does the same: the world canvas cancels pointerdown, which
+// drops the compatibility mouseup for that gesture.
+// Canvas walk, use, and menus wait until that release, as in dungeon-engine
+// (click) and the legacy map (onMouseRelease). Holding one button is the
+// window to press the other; the chord is Look and the deferred action drops.
 let cancelNext = false;
+let pendingCanvasButton = null;
+
+function clearPointerButtons() {
+    buttonsDown.left = false;
+    buttonsDown.right = false;
+}
 let suppressNextSlotClick = false;
 let suppressNextContextMenu = false;
 let suppressNextCanvasClick = false;
@@ -3545,6 +3559,15 @@ function draw() {
     }
 }
 
+function retainFieldsOnFloor(z) {
+    const zz = z | 0;
+    const drop = [];
+    fields.forEach(function (f, key) {
+        if (!f || (f.z | 0) !== zz) drop.push(key);
+    });
+    for (let i = 0; i < drop.length; i++) fields.delete(drop[i]);
+}
+
 function isWalkable(x, y) {
     if (!viewport || !self) return false;
     const t = Path.tileAt(viewport, x, y);
@@ -3643,18 +3666,34 @@ function routeWalkable(x, y) {
     return !!(cell && cell.walkable);
 }
 
+function isHopPad(x, y) {
+    const floor = visualLoader.floor;
+    if (!floor || !floor.present || !self) return false;
+    if ((floor.z | 0) !== (self.z | 0)) return false;
+    if (!Visual || typeof Visual.hopPadAt !== 'function') return false;
+    return Visual.hopPadAt(floor, x, y);
+}
+
 function findRoute(from, dest) {
     if (MinimapPath && MinimapStore && typeof MinimapPath.findPath === 'function') {
-        return MinimapPath.findPath(from, dest, routeWalkable);
+        return MinimapPath.findPath(
+            from, dest, Path.avoidHopPads(routeWalkable, isHopPad, dest)
+        );
     }
-    return Path.findOrthogonalPath(from, dest, isWalkable);
+    return Path.findOrthogonalPath(
+        from, dest, Path.avoidHopPads(isWalkable, isHopPad, dest)
+    );
 }
 
 function approachTile(from, target, range) {
     if (MinimapPath && MinimapStore && typeof MinimapPath.nearestApproach === 'function') {
-        return MinimapPath.nearestApproach(from, target, range, routeWalkable);
+        return MinimapPath.nearestApproach(
+            from, target, range, Path.avoidHopPads(routeWalkable, isHopPad, null)
+        );
     }
-    return Path.nearestApproach(from, target, range, isWalkable);
+    return Path.nearestApproach(
+        from, target, range, Path.avoidHopPads(isWalkable, isHopPad, null)
+    );
 }
 
 function walkStepDecision(left, arrived, sameFloor) {
@@ -4504,6 +4543,64 @@ function finishCanvasGroundDrag(ev) {
     return true;
 }
 
+function canvasLookNow(ev) {
+    pendingCanvasButton = null;
+    if (groundDrag) {
+        groundDrag = null;
+        if (currentDrag && currentDrag.kind === 'ground') currentDrag = null;
+        removeGroundDragAvatar();
+    }
+    cancelNext = true;
+    applyIntents([Mouse.buildLookIntent(hitFromTile(canvasTile(ev)))]);
+}
+
+function flushPendingCanvasAction(ev) {
+    if (!pendingCanvasButton || !ev) return;
+    if (ev.button !== 0 && ev.button !== 2) return;
+    const button = ev.button === 2 ? 'right' : 'left';
+    const otherDown = button === 'left' ? buttonsDown.right : buttonsDown.left;
+    if (otherDown && Mouse.isClassicLookChord({
+        mode: mouse.mouseControlMode,
+        button: button,
+        leftPressed: buttonsDown.left,
+        rightPressed: buttonsDown.right
+    })) {
+        canvasLookNow(ev);
+        return;
+    }
+    if (pendingCanvasButton === 'use-with') {
+        if (button !== 'left') return;
+        pendingCanvasButton = null;
+        const tile = canvasTile(ev);
+        const itemId = pendingUseWith;
+        pendingUseWith = null;
+        if (tile && itemId) {
+            send(C2S.USE_ITEM_WITH, encodeUseItemWith(tile.x, tile.y, tile.z, itemId));
+        }
+        return;
+    }
+    if (pendingCanvasButton !== button) return;
+    pendingCanvasButton = null;
+    const hit = hitFromTile(canvasTile(ev));
+    const intents = Mouse.processMouseAction({
+        button: button,
+        mode: mouse.mouseControlMode,
+        lootMode: mouse.lootControlMode,
+        talkOnRightClick: mouse.talkOnRightClick,
+        modifiers: {
+            shift: ev.shiftKey,
+            ctrl: ev.ctrlKey,
+            alt: ev.altKey,
+            meta: ev.metaKey
+        },
+        hit: hit,
+        playerControlMode: 'manual',
+        playerAlive: !downed,
+        playerTile: self
+    });
+    applyIntents(intents, ev.clientX, ev.clientY);
+}
+
 function onCanvasPointer(ev) {
     if (!self || !viewport || downed) return;
     if (ev.button !== 0 && ev.button !== 2) return;
@@ -4517,12 +4614,6 @@ function onCanvasPointer(ev) {
     }
     hideCtx();
     const tile = canvasTile(ev);
-    if (pendingUseWith && tile && button === 'left') {
-        const itemId = pendingUseWith;
-        pendingUseWith = null;
-        send(C2S.USE_ITEM_WITH, encodeUseItemWith(tile.x, tile.y, tile.z, itemId));
-        return;
-    }
     const hit = hitFromTile(tile);
     if (Mouse.isClassicLookChord({
         mode: mouse.mouseControlMode,
@@ -4530,8 +4621,11 @@ function onCanvasPointer(ev) {
         leftPressed: buttonsDown.left,
         rightPressed: buttonsDown.right
     })) {
-        cancelNext = true;
-        applyIntents([Mouse.buildLookIntent(hit)]);
+        canvasLookNow(ev);
+        return;
+    }
+    if (pendingUseWith && tile && button === 'left') {
+        pendingCanvasButton = 'use-with';
         return;
     }
     if (button === 'left' && hit && hit.groundMoveUid && Mouse.allowGroundLmbDrag({
@@ -4563,25 +4657,10 @@ function onCanvasPointer(ev) {
             stackIndex: groundDrag.stackIndex,
             item: groundDrag.item
         };
+        pendingCanvasButton = null;
         return;
     }
-    const intents = Mouse.processMouseAction({
-        button: button,
-        mode: mouse.mouseControlMode,
-        lootMode: mouse.lootControlMode,
-        talkOnRightClick: mouse.talkOnRightClick,
-        modifiers: {
-            shift: ev.shiftKey,
-            ctrl: ev.ctrlKey,
-            alt: ev.altKey,
-            meta: ev.metaKey
-        },
-        hit: hit,
-        playerControlMode: 'manual',
-        playerAlive: !downed,
-        playerTile: self
-    });
-    applyIntents(intents, ev.clientX, ev.clientY);
+    pendingCanvasButton = button;
 }
 
 function onCanvasPointerUp(ev) {
@@ -4605,6 +4684,15 @@ function onCanvasPointerUp(ev) {
         groundDrag = null;
         currentDrag = null;
         removeGroundDragAvatar();
+        if (Mouse.isClassicLookChord({
+            mode: mouse.mouseControlMode,
+            button: 'left',
+            leftPressed: buttonsDown.left,
+            rightPressed: buttonsDown.right
+        })) {
+            canvasLookNow(ev);
+            return;
+        }
         const intents = Mouse.processMouseAction({
             button: 'left',
             mode: mouse.mouseControlMode,
@@ -4679,7 +4767,9 @@ function onFrame(bytes, tokenHex) {
         const originX = r.i16(), originY = r.i16(), z = r.i8(), w = r.u8(), h = r.u8();
         const tiles = [];
         for (let i = 0; i < w * h; i++) tiles.push(r.u16());
+        const prevZ = viewport ? (viewport.z | 0) : null;
         viewport = { originX: originX, originY: originY, z: z, width: w, height: h, tiles: tiles };
+        if (prevZ != null && prevZ !== (z | 0)) retainFieldsOnFloor(z);
         noteMinimapWindow();
         setHud();
         draw();
@@ -5405,10 +5495,28 @@ window.addEventListener('pointerdown', function (ev) {
     if (ev.button === 0) buttonsDown.left = true;
     if (ev.button === 2) buttonsDown.right = true;
 }, true);
+window.addEventListener('mousedown', function (ev) {
+    if (ev.button === 0) buttonsDown.left = true;
+    else if (ev.button === 2) buttonsDown.right = true;
+    else return;
+    if (!pendingCanvasButton && !groundDrag) return;
+    if (!canvas || !ev.target) return;
+    if (ev.target !== canvas && !(canvas.contains && canvas.contains(ev.target))) return;
+    const button = ev.button === 2 ? 'right' : 'left';
+    const otherDown = button === 'left' ? buttonsDown.right : buttonsDown.left;
+    if (!otherDown) return;
+    if (!Mouse.isClassicLookChord({
+        mode: mouse.mouseControlMode,
+        button: button,
+        leftPressed: buttonsDown.left,
+        rightPressed: buttonsDown.right
+    })) return;
+    canvasLookNow(ev);
+}, true);
 window.addEventListener('pointerup', function (ev) {
-    if (ev.button === 0) buttonsDown.left = false;
-    if (ev.button === 2) buttonsDown.right = false;
     onCanvasPointerUp(ev);
+    flushPendingCanvasAction(ev);
+    if (ev.button === 0 || ev.button === 2) clearPointerButtons();
     if (suppressNextCanvasClick || suppressNextDocClick) {
         setTimeout(function () {
             suppressNextCanvasClick = false;
@@ -5416,12 +5524,18 @@ window.addEventListener('pointerup', function (ev) {
         }, 150);
     }
 });
+window.addEventListener('mouseup', function (ev) {
+    if (ev.button !== 0 && ev.button !== 2) return;
+    flushPendingCanvasAction(ev);
+    clearPointerButtons();
+}, true);
 window.addEventListener('pointermove', function (ev) {
     if (groundDrag) {
         updateGroundDragAvatar(ev);
     }
 });
 window.addEventListener('pointercancel', function (ev) {
+    pendingCanvasButton = null;
     if (ev.button === 0) buttonsDown.left = false;
     if (ev.button === 2) buttonsDown.right = false;
     suppressNextCanvasClick = false;
@@ -5513,6 +5627,7 @@ window.addEventListener('keyup', function (ev) {
 });
 
 window.addEventListener('blur', function () {
+    pendingCanvasButton = null;
     keyWalk.reset();
     suppressNextCanvasClick = false;
     suppressNextDocClick = false;

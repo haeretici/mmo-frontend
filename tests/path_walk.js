@@ -108,6 +108,63 @@ function main() {
     assert.strictEqual(pw.chebyshev(chaseDest.x, chaseDest.y, 4, 0), 1);
     assert.ok(!(chaseDest.x === 0 && chaseDest.y === 0), 'Scout 4 sqm away still walks in');
 
+    function stairAt(x, y) {
+        return x === 2 && y === 1;
+    }
+    function openRow(x, y) {
+        return y >= 0 && y <= 2 && x >= 0 && x <= 4;
+    }
+    function corridor(x, y) {
+        return y === 1 && x >= 0 && x <= 4;
+    }
+    function trace(from, dirs) {
+        const cells = [];
+        let x = from.x | 0;
+        let y = from.y | 0;
+        for (let i = 0; i < dirs.length; i++) {
+            const step = pw.DIRS[dirs[i]];
+            x += step.dx;
+            y += step.dy;
+            cells.push(x + ',' + y);
+        }
+        return cells;
+    }
+    const stairAround = pw.findOrthogonalPath(
+        { x: 0, y: 1 },
+        { x: 4, y: 1 },
+        pw.avoidHopPads(openRow, stairAt, { x: 4, y: 1 })
+    );
+    assert.ok(stairAround && stairAround.length > 1, 'path goes around the stair');
+    const aroundCells = trace({ x: 0, y: 1 }, stairAround);
+    assert.ok(aroundCells.indexOf('2,1') < 0, 'around path does not enter the stair');
+    assert.strictEqual(aroundCells[aroundCells.length - 1], '4,1');
+
+    const onto = pw.findOrthogonalPath(
+        { x: 0, y: 1 },
+        { x: 2, y: 1 },
+        pw.avoidHopPads(openRow, stairAt, { x: 2, y: 1 })
+    );
+    assert.ok(onto && onto.length > 0, 'click on the stair still walks there');
+    assert.strictEqual(trace({ x: 0, y: 1 }, onto).pop(), '2,1');
+
+    assert.strictEqual(
+        pw.findOrthogonalPath(
+            { x: 0, y: 1 },
+            { x: 4, y: 1 },
+            pw.avoidHopPads(corridor, stairAt, { x: 4, y: 1 })
+        ),
+        null,
+        'a stair blocking the only corridor is not a shortcut'
+    );
+    const stand = pw.nearestApproach(
+        { x: 0, y: 1 },
+        { x: 4, y: 1 },
+        1,
+        pw.avoidHopPads(openRow, stairAt, null)
+    );
+    assert.ok(stand);
+    assert.ok(!(stand.x === 2 && stand.y === 1), 'approach does not stand on the stair');
+
     console.log('ok path_walk');
 }
 

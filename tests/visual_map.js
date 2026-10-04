@@ -47,6 +47,33 @@ function main() {
     assert.strictEqual(floor.originX, 10);
     assert.strictEqual(Visual.paletteAt(floor, 'ground', 10, 20), 2);
     assert.strictEqual(Visual.paletteAt(floor, 'ground', 0, 0), 0);
+    assert.strictEqual(Visual.hopsOnStepRole('stairs_up'), true);
+    assert.strictEqual(Visual.hopsOnStepRole('stairs_down'), true);
+    assert.strictEqual(Visual.hopsOnStepRole('hole'), true);
+    assert.strictEqual(Visual.hopsOnStepRole('ladder_up'), false);
+    assert.strictEqual(Visual.hopsOnStepRole('floor'), false);
+
+    const stairCells = new Uint16Array(4);
+    stairCells[3] = 1;
+    const hopFloor = {
+        present: true,
+        originX: 10,
+        originY: 20,
+        width: 2,
+        height: 2,
+        palette: [
+            null,
+            { catalogId: 'broken_cave_stairs', kind: 'tiles', roleId: 'stairs_up' },
+            { catalogId: 'ladder', kind: 'tiles', roleId: 'ladder_up' }
+        ],
+        subLayers: [
+            { id: 'ground', cells: new Uint16Array([2, 0, 0, 0]) },
+            { id: 'vertical', cells: stairCells }
+        ]
+    };
+    assert.strictEqual(Visual.hopPadAt(hopFloor, 11, 21), true, 'vertical stairs_up is a hop pad');
+    assert.strictEqual(Visual.hopPadAt(hopFloor, 10, 20), false, 'ladder is not a hop pad');
+    assert.strictEqual(Visual.hopPadAt(hopFloor, 0, 0), false, 'outside the window is unknown');
 
     const big = Object.assign({}, floor, { originX: 0, originY: 0, width: 48, height: 48 });
     assert.ok(Visual.coversView(big, 8, 8, 15, 11));
