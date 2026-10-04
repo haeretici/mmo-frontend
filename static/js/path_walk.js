@@ -96,9 +96,26 @@
     }
 
     /**
-     * Stairs and holes stay closed so a path to another tile goes around them.
-     * The goal itself stays open, so a click on that pad still walks onto it.
-     * Pass a null goal to close every pad (approach / chase stand tiles).
+     * Fire, poison, and energy. Barrier and vine are obstacles, not damage pads.
+     * Unknown text is not a damage field.
+     */
+    function isDamageFieldKind(kind) {
+        const s = String(kind || '').trim().toLowerCase();
+        if (!s) return false;
+        if (s === 'fire' || s.startsWith('fire') || s.indexOf('flame') >= 0) return true;
+        if (
+            s === 'poison' || s.startsWith('poison')
+            || s === 'earth' || s.startsWith('earth')
+        ) return true;
+        if (s === 'energy' || s.startsWith('energy') || s.startsWith('electric')) return true;
+        return false;
+    }
+
+    /**
+     * Stairs, holes, and damage fields stay closed so a path to another tile
+     * goes around them. The goal itself stays open, so a click on that pad
+     * still walks onto it. Pass a null goal to close every pad (approach /
+     * chase stand tiles).
      */
     function avoidHopPads(isWalkable, isHop, goal) {
         const hasGoal = !!(goal && goal.x != null && goal.y != null);
@@ -158,6 +175,7 @@
         nearestApproach,
         chebyshev,
         avoidHopPads,
+        isDamageFieldKind,
         CHASE_APPROACH_RANGE
     };
 });

@@ -500,13 +500,13 @@ footer {
   max-width: 100%;
   background: #151821;
   image-rendering: pixelated;
-  cursor: grab;
+  cursor: default;
   touch-action: none;
   user-select: none;
 }
 
 .play-minimap-canvas.is-dragging {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .play-panel {

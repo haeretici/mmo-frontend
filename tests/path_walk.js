@@ -165,6 +165,43 @@ function main() {
     assert.ok(stand);
     assert.ok(!(stand.x === 2 && stand.y === 1), 'approach does not stand on the stair');
 
+    assert.strictEqual(pw.isDamageFieldKind('fire'), true);
+    assert.strictEqual(pw.isDamageFieldKind('fire_field'), true);
+    assert.strictEqual(pw.isDamageFieldKind('poison'), true);
+    assert.strictEqual(pw.isDamageFieldKind('poisonfield'), true);
+    assert.strictEqual(pw.isDamageFieldKind('earth'), true);
+    assert.strictEqual(pw.isDamageFieldKind('energy'), true);
+    assert.strictEqual(pw.isDamageFieldKind('energy_field'), true);
+    assert.strictEqual(pw.isDamageFieldKind('barrier'), false);
+    assert.strictEqual(pw.isDamageFieldKind('vine'), false);
+    assert.strictEqual(pw.isDamageFieldKind('magic_wall'), false);
+    assert.strictEqual(pw.isDamageFieldKind(''), false);
+
+    function fireAt(x, y) {
+        return x === 2 && y === 1;
+    }
+    const aroundFire = pw.findOrthogonalPath(
+        { x: 0, y: 1 },
+        { x: 4, y: 1 },
+        pw.avoidHopPads(openRow, fireAt, { x: 4, y: 1 })
+    );
+    assert.ok(aroundFire && aroundFire.length > 1, 'path goes around the fire field');
+    assert.ok(trace({ x: 0, y: 1 }, aroundFire).indexOf('2,1') < 0, 'around path does not enter the fire');
+    const ontoFire = pw.findOrthogonalPath(
+        { x: 0, y: 1 },
+        { x: 2, y: 1 },
+        pw.avoidHopPads(openRow, fireAt, { x: 2, y: 1 })
+    );
+    assert.strictEqual(trace({ x: 0, y: 1 }, ontoFire).pop(), '2,1', 'click on the field still walks there');
+    const standOffFire = pw.nearestApproach(
+        { x: 0, y: 1 },
+        { x: 3, y: 1 },
+        1,
+        pw.avoidHopPads(openRow, fireAt, null)
+    );
+    assert.ok(standOffFire);
+    assert.ok(!(standOffFire.x === 2 && standOffFire.y === 1), 'approach does not stand on the field');
+
     console.log('ok path_walk');
 }
 

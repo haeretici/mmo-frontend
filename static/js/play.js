@@ -3600,7 +3600,10 @@ function isWalkable(x, y) {
 function minimapBakedBlocker(x, y, z) {
     const zz = z | 0;
     const f = fields.get(x + ',' + y + ',' + zz);
-    if (f && (f.kind === 'barrier' || f.kind === 'vine' || (f.flags & 1))) return true;
+    if (f && (
+        f.kind === 'barrier' || f.kind === 'vine' || (f.flags & 1)
+        || (Path && Path.isDamageFieldKind(f.kind))
+    )) return true;
     let blocked = false;
     worldPins.forEach(function (pin) {
         if (blocked) return;
@@ -3674,25 +3677,36 @@ function isHopPad(x, y) {
     return Visual.hopPadAt(floor, x, y);
 }
 
+function isDamageFieldAt(x, y) {
+    if (!self || !Path || typeof Path.isDamageFieldKind !== 'function') return false;
+    const f = fields.get((x | 0) + ',' + (y | 0) + ',' + (self.z | 0));
+    return !!(f && Path.isDamageFieldKind(f.kind));
+}
+
+// Stairs, holes, and damage fields. The goal stays open inside avoidHopPads.
+function isRouteClosed(x, y) {
+    return isHopPad(x, y) || isDamageFieldAt(x, y);
+}
+
 function findRoute(from, dest) {
     if (MinimapPath && MinimapStore && typeof MinimapPath.findPath === 'function') {
         return MinimapPath.findPath(
-            from, dest, Path.avoidHopPads(routeWalkable, isHopPad, dest)
+            from, dest, Path.avoidHopPads(routeWalkable, isRouteClosed, dest)
         );
     }
     return Path.findOrthogonalPath(
-        from, dest, Path.avoidHopPads(isWalkable, isHopPad, dest)
+        from, dest, Path.avoidHopPads(isWalkable, isRouteClosed, dest)
     );
 }
 
 function approachTile(from, target, range) {
     if (MinimapPath && MinimapStore && typeof MinimapPath.nearestApproach === 'function') {
         return MinimapPath.nearestApproach(
-            from, target, range, Path.avoidHopPads(routeWalkable, isHopPad, null)
+            from, target, range, Path.avoidHopPads(routeWalkable, isRouteClosed, null)
         );
     }
     return Path.nearestApproach(
-        from, target, range, Path.avoidHopPads(isWalkable, isHopPad, null)
+        from, target, range, Path.avoidHopPads(isWalkable, isRouteClosed, null)
     );
 }
 
@@ -5276,6 +5290,7 @@ function onFrame(bytes, tokenHex) {
             f.createdAt = recvMs;
         }
         fields.set(f.x + ',' + f.y + ',' + f.z, f);
+        noteMinimapWindow();
         draw();
         return;
     }
@@ -5294,6 +5309,7 @@ function onFrame(bytes, tokenHex) {
             z: r.i8()
         };
         fields.delete(g.x + ',' + g.y + ',' + g.z);
+        noteMinimapWindow();
         draw();
         return;
     }

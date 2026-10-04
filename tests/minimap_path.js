@@ -75,6 +75,9 @@ async function main() {
     assert.ok(play.includes('MOVE_STEP'));
     assert.ok(play.includes('avoidHopPads'));
     assert.ok(play.includes('hopPadAt'));
+    assert.ok(play.includes('isRouteClosed'));
+    assert.ok(play.includes('isDamageFieldAt'));
+    assert.ok(play.includes('isDamageFieldKind'));
     assert.ok(!play.includes('indexedDB'));
 
     assert.deepStrictEqual(mp.findPath({ x: 0, y: 0 }, { x: 0, y: 0 }, open), []);
@@ -118,6 +121,31 @@ async function main() {
         pw.avoidHopPads(openBand, stairAt, { x: 2, y: 1 })
     );
     assert.deepStrictEqual(walkDirs({ x: 0, y: 1 }, ontoStair), { x: 2, y: 1 });
+
+    function poisonAt(x, y) {
+        return pw.isDamageFieldKind('poison') && x === 2 && y === 1;
+    }
+    const aroundPoison = mp.findPath(
+        { x: 0, y: 1 },
+        { x: 4, y: 1 },
+        pw.avoidHopPads(openBand, poisonAt, { x: 4, y: 1 })
+    );
+    assert.ok(aroundPoison && aroundPoison.length > 1);
+    let px = 0;
+    let py = 1;
+    for (let i = 0; i < aroundPoison.length; i++) {
+        px += mp.DIRS[aroundPoison[i]].dx;
+        py += mp.DIRS[aroundPoison[i]].dy;
+        assert.ok(!(px === 2 && py === 1), 'A* does not enter the poison field');
+    }
+    assert.strictEqual(px, 4);
+    assert.strictEqual(py, 1);
+    const ontoPoison = mp.findPath(
+        { x: 0, y: 1 },
+        { x: 2, y: 1 },
+        pw.avoidHopPads(openBand, poisonAt, { x: 2, y: 1 })
+    );
+    assert.deepStrictEqual(walkDirs({ x: 0, y: 1 }, ontoPoison), { x: 2, y: 1 });
 
     function pinch(x, y) {
         if (x === 2 && y === 1) return false;

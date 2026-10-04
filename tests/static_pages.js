@@ -82,6 +82,7 @@ function main() {
     const bakeFn = play.text.slice(bakeStart, bakeEnd);
     assert.ok(bakeFn.includes("pin.kind === 'chest'"));
     assert.ok(bakeFn.includes("f.kind === 'barrier'"));
+    assert.ok(bakeFn.includes('isDamageFieldKind'), 'minimap bake remembers fire, poison, and energy');
     assert.ok(!bakeFn.includes('others'), 'minimap bake does not read creatures');
     assert.ok(!/Hunt Simulator/.test(play.text));
     assert.ok(!/huntSelect/.test(play.text));
