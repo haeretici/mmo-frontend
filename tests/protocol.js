@@ -206,6 +206,35 @@ function main() {
         assert.strictEqual(feBrowse.slots[1].stackIndex, 1);
         assert.strictEqual(feBrowse.slots[1].count, 2);
 
+        assert.strictEqual(fe.C2S.TRADE_OFFER, 48);
+        assert.strictEqual(fe.C2S.TRADE_ACCEPT, 49);
+        assert.strictEqual(fe.C2S.TRADE_CANCEL, 50);
+        assert.strictEqual(fe.S2C.TRADE, 139);
+        assert.strictEqual(fe.S2C.TRADE_CLOSE, 140);
+        assert.ok(!Object.prototype.hasOwnProperty.call(fe.C2S, 'TRADE_STATUS'));
+        assert.ok(!Object.prototype.hasOwnProperty.call(fe.S2C, 'TRADE_STATUS'));
+        const offerBuf = fe.encodeTradeOffer(
+            { kind: 'equipment', slot: 'weapon' },
+            42
+        );
+        const offer = messages.decodeTradeOffer(offerBuf);
+        assert.strictEqual(offer.partnerId, 42);
+        assert.strictEqual(offer.from.kind, 'equipment');
+        assert.strictEqual(offer.from.slot, 'weapon');
+        const tradeBuf = messages.encodeTrade({
+            side: 1,
+            name: 'Bob',
+            items: [{ id: 'gold_coin', count: 4, flags: 0 }, { id: 'trade_bag', count: 1, flags: 1 }]
+        });
+        const trade = fe.decodeTrade(tradeBuf);
+        assert.strictEqual(trade.side, 1);
+        assert.strictEqual(trade.name, 'Bob');
+        assert.strictEqual(trade.items.length, 2);
+        assert.strictEqual(trade.items[0].id, 'gold_coin');
+        assert.strictEqual(trade.items[0].count, 4);
+        assert.strictEqual(trade.items[1].flags, 1);
+        assert.strictEqual(messages.decodeTrade(tradeBuf).items[1].id, 'trade_bag');
+
         // Cast parity: frontend encoder -> server decoder
         const castBuf = fe.encodeCast({ spellId: 'snap_jab', targetId: 101, x: 12, y: 15, z: 6 });
         const srvDecodedCast = messages.decodeCast(castBuf);

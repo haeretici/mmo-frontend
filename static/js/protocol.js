@@ -36,7 +36,10 @@
         OPEN_BAG: 44,
         CLOSE_BAG: 45,
         BROWSE_FIELD: 46,
-        BROWSE_FIELD_CLOSE: 47
+        BROWSE_FIELD_CLOSE: 47,
+        TRADE_OFFER: 48,
+        TRADE_ACCEPT: 49,
+        TRADE_CANCEL: 50
     });
 
     const S2C = Object.freeze({
@@ -73,7 +76,9 @@
         SKILL_PROGRESS: 135,
         GROUND: 136,
         GROUND_GONE: 137,
-        BROWSE_FIELD: 138
+        BROWSE_FIELD: 138,
+        TRADE: 139,
+        TRADE_CLOSE: 140
     });
 
     const REASON = Object.freeze({
@@ -317,6 +322,24 @@
         return b;
     }
 
+    function encodeTradeOffer(from, partnerId) {
+        const loc = writeItemLoc(from);
+        const p = new Uint8Array(loc.length + 4);
+        p.set(loc, 0);
+        new DataView(p.buffer).setUint32(loc.length, partnerId >>> 0, true);
+        return p;
+    }
+
+    function decodeTrade(payload) {
+        const r = new Reader(payload || new Uint8Array(0));
+        const out = { side: r.u8(), name: r.str(), items: [] };
+        const n = r.u8();
+        for (let i = 0; i < n; i++) {
+            out.items.push({ id: r.str(), count: r.u16(), flags: r.u8() });
+        }
+        return out;
+    }
+
     function encodeMoveItem(from, to, count) {
         const bFrom = writeItemLoc(from);
         const bTo = writeItemLoc(to);
@@ -533,6 +556,8 @@
         encodeCloseBag,
         encodeBrowseField,
         decodeBrowseField,
+        encodeTradeOffer,
+        decodeTrade,
         encodeMoveItem,
         encodeMovePath,
         encodeCast,

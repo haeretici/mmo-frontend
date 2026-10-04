@@ -788,6 +788,108 @@ canvas#world {
   }
 }
 
+html[data-trade-aim],
+html[data-trade-aim] * {
+  cursor: crosshair !important;
+}
+
+#inventoryFloatRoot .inv-float-panel.inv-trade-panel {
+  width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  min-width: 0;
+
+  .inv-trade-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .inv-trade-col {
+    min-width: 0;
+  }
+
+  .inv-trade-label {
+    min-height: 1em;
+    margin-bottom: 4px;
+    overflow: hidden;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-main, #{$text-main});
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inv-trade-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 4px;
+    min-height: 32px;
+    max-height: calc(4 * 32px + 3 * 4px);
+    overflow: auto;
+  }
+
+  .inv-trade-slot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border-color, #{$border-color});
+    background: var(--bg-dark, #{$bg-dark});
+    cursor: pointer;
+
+    img {
+      width: 24px;
+      height: 24px;
+      image-rendering: pixelated;
+      pointer-events: none;
+    }
+
+    .inv-stack-count {
+      position: absolute;
+      right: 1px;
+      bottom: 0;
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-shadow: 1px 1px 0 #000;
+      pointer-events: none;
+    }
+  }
+
+  .inv-trade-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+
+    button {
+      flex: 1 1 0;
+      min-width: 0;
+      padding: 2px 6px;
+      border: 1px solid var(--border-color, #{$border-color});
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main, #{$text-main});
+      font: 600 0.72rem/1.2 var(--font-ui, #{$font-ui});
+      cursor: pointer;
+
+      &:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+    }
+  }
+}
+
+@media (max-width: 420px) {
+  #inventoryFloatRoot .inv-float-panel.inv-trade-panel .inv-trade-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 // Floating panels (dialog / shop / loot)
 .float-panel,
 .inv-float-panel {

@@ -65,6 +65,16 @@ Boot fails if `proxyApi` and `gameOrigin` is not `http://` or `https://`.
 | `php/Visual.php` | `/visual` window + `/sprites` PNG from `content/` |
 | `.htaccess` | deny `config/` `php/`; fallback to `index.php` |
 
+## Play trade
+
+`/play` trades one item, or one container and its contents, with another player. **Trade with …** is on a filled backpack slot, a filled equipment slot, an open bag slot, a ground item, and a Browse Field row, after the existing item actions. It is absent on an empty slot. Corpses, world pins, and fields do not get the entry.
+
+Choosing it arms the same crosshair idea as **Use with …**. A map click on a player, a monster, an NPC, or an empty tile chooses that partner. A left click on a battle-list row does the same and does not attack. A corpse, a world pin, a ground item, or a click that is not the map or a battle-list row clears the aim and sends nothing. The battle-list menu stays Attack, Look, and Chase.
+
+A player farther than Chebyshev 2 on this floor, or a ground or Browse Field item farther than Chebyshev 1, walks with the existing click-to-walk. `TRADE_OFFER` **48** is sent when that walk arrives. Another floor shows **First go upstairs.** or **First go downstairs.** and does not send. No path shows **There is no way.** A monster, an NPC, or an empty tile still sends at once. The server still refuses an offer that arrives out of range.
+
+The **Trade** window is a floating bag panel. The left column is your offer. The right column is the partner. Names label the columns. Each sprite shows its count. **Accept** stays disabled until the counter snapshot arrives (`TRADE` **139**, side 1). Pressing it sends `TRADE_ACCEPT` **49** once and disables the button. **Reject** and the close button send `TRADE_CANCEL` **50**. `TRADE_CLOSE` **140** closes the window. A row click uses the existing item popover. Rows are not a drag source and not a drop target. The invited player has no window until their own offer. Server sentences stay the normal system `SAY`.
+
 ## Remaining
 
 Play is `http://www.example.com/play` (same-origin sessionStorage). Visual hybrid + sprites are this origin (`/visual`, `/sprites`). Action bars: [03](./03_action_bars.md). Do not extract a play vhost until asked. **Later Symfony** on www — do not start until asked. Do not add a wiki loot table.

@@ -176,6 +176,24 @@ function main() {
     assert.strictEqual(bf.isUseWithItem({ id: 'rope' }), true);
     assert.strictEqual(bf.isUseWithItem({ id: 'gold_coin' }), false);
 
+    const traded = bf.menuRows({ id: 'rope', count: 1, flags: 0, stackIndex: 1 }, {
+        tradeLabel: function (it) { return it && it.id ? 'Trade with …' : ''; }
+    });
+    assert.strictEqual(traded[traded.length - 1].label, 'Trade with …');
+    assert.strictEqual(traded[traded.length - 1].action, 'TRADE');
+    assert.ok(traded.some(function (row) { return row.action === 'PICKUP'; }));
+    const plain = bf.menuRows({ id: 'gold_coin', count: 4, flags: 0 }, {});
+    assert.ok(!plain.some(function (row) { return row.action === 'TRADE'; }));
+    const bagRow = bf.menuRows({ id: 'backpack', flags: 1 }, {
+        tradeLabel: function () { return 'Trade with …'; }
+    });
+    assert.ok(bagRow.some(function (row) { return row.action === 'OPEN'; }));
+    assert.ok(bagRow.some(function (row) { return row.action === 'TRADE'; }));
+    const unlabeled = bf.menuRows({ id: '', flags: 0 }, {
+        tradeLabel: function () { return ''; }
+    });
+    assert.ok(!unlabeled.some(function (row) { return row.action === 'TRADE'; }));
+
     console.log('ok browse_field');
 }
 

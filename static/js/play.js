@@ -35,7 +35,7 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, encodeBrowseField, decodeBrowseField, decodeCastFx, decodeAppear, decodeSwing, decodeStats, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, rttMs, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeTradeOffer, decodeTrade, encodeMovePath, encodeCast, encodeBrowseField, decodeBrowseField, decodeCastFx, decodeAppear, decodeSwing, decodeStats, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, rttMs, Reader } = EngineProtocol;
 const StatusIcons = typeof EngineStatusIcons !== 'undefined' ? EngineStatusIcons : null;
 const Mouse = EngineMouse;
 const InvMouse = typeof EngineInventoryMouse !== 'undefined' ? EngineInventoryMouse : null;
@@ -54,6 +54,7 @@ const CombatFx = typeof EngineCombatFx !== 'undefined' ? EngineCombatFx : null;
 const ContainerDrop = typeof EngineContainerDrop !== 'undefined' ? EngineContainerDrop : null;
 const SkillProgress = typeof EngineSkillProgress !== 'undefined' ? EngineSkillProgress : null;
 const BrowseField = typeof EngineBrowseField !== 'undefined' ? EngineBrowseField : null;
+const TradeUi = typeof EngineTradeUi !== 'undefined' ? EngineTradeUi : null;
 const MinimapStore = typeof EngineMinimapStore !== 'undefined' ? EngineMinimapStore : null;
 const MinimapView = typeof EngineMinimapView !== 'undefined' ? EngineMinimapView : null;
 const MinimapPath = typeof EngineMinimapPath !== 'undefined' ? EngineMinimapPath : null;
@@ -74,6 +75,8 @@ let browseUi = null;
 const groundRejectSeqs = [];
 let fields = new Map();
 let pendingUseWith = null;
+let pendingTrade = null;
+let tradeUi = null;
 let seenAt = new Map();
 let openCorpse = 0;
 let bag = { containerId: '', capacity: BACKPACK_SLOTS, slots: [] };
@@ -510,6 +513,14 @@ function renderCombat() {
                 suppressNextSlotClick = false;
                 return;
             }
+            if (pendingTrade) {
+                const from = pendingTrade;
+                const ent = others.get(row.id);
+                clearTradeAim();
+                commitTradeOffer(from, ent ? entityTradePartner(ent) : { id: row.id >>> 0, player: false }, 0);
+                ev.stopPropagation();
+                return;
+            }
             const intents = combatIntentsFromEvent(ev, 'left');
             if (!intents) {
                 selectTarget(row.id);
@@ -522,6 +533,10 @@ function renderCombat() {
         });
         d.addEventListener('contextmenu', function (ev) {
             ev.preventDefault();
+            if (pendingTrade) {
+                clearTradeAim();
+                return;
+            }
             if (suppressNextContextMenu) {
                 suppressNextContextMenu = false;
                 return;
@@ -1021,7 +1036,8 @@ function syncFloatRootAria() {
     const root = $('inventoryFloatRoot');
     if (!root) return;
     const browseOpen = browseUi && browseUi.isAnyOpen && browseUi.isAnyOpen();
-    root.setAttribute('aria-hidden', (openBags.size || browseOpen) ? 'false' : 'true');
+    const tradeOpen = tradeUi && tradeUi.isOpen && tradeUi.isOpen();
+    root.setAttribute('aria-hidden', (openBags.size || browseOpen || tradeOpen) ? 'false' : 'true');
 }
 
 function removeOpenBagWindow(uid) {
@@ -1434,7 +1450,7 @@ function itemInOpenContainer(containerUid, index) {
 
 function containerHitFromTarget(target) {
     if (!target || typeof target.closest !== 'function') return null;
-    if (target.closest('#loot-panel, #npc-dialog, #npc-shop')) return null;
+    if (target.closest('#loot-panel, #npc-dialog, #npc-shop, #trade-window')) return null;
     const bagWindow = target.closest('.inv-float-panel[data-container-uid], .inv-float-panel[data-open-bag-uid]');
     const sidebar = target.closest('.game-backpack-panel');
     const surface = bagWindow || sidebar;
@@ -1734,6 +1750,17 @@ function showEquipMenu(clientX, clientY, item, slotKey) {
             }
         });
     }
+    if (item && item.id && TradeUi) {
+        const tradeRows = TradeUi.withTradeEntry([], item);
+        if (tradeRows.length) {
+            rows.push({
+                label: tradeRows[0].label,
+                fn: function () {
+                    armTradeAim({ kind: 'equipment', slot: slotKey }, item);
+                }
+            });
+        }
+    }
     rows.forEach(function (entry) {
         const b = document.createElement('button');
         b.type = 'button';
@@ -1844,7 +1871,7 @@ function applyInventoryIntents(intents, ctx) {
     }
     if (type === 'OPEN_CONTEXT_MENU') {
         if (ctx.kind === 'equipment') showEquipMenu(x, y, item, ctx.slotKey);
-        else showInvMenu(x, y, item, ctx.containerId, ctx.index);
+        else showInvMenu(x, y, item, ctx.containerId, ctx.index, ctx.allowTrade);
         return type;
     }
     hideCtx();
@@ -1877,6 +1904,7 @@ function applyInventoryIntents(intents, ctx) {
     }
     if (type === 'ENTER_USE_WITH') {
         if (item && item.id) {
+            clearTradeAim();
             pendingUseWith = item.id;
             fct('Use ' + itemLabel(item.id) + ' with…');
         }
@@ -2178,6 +2206,7 @@ function paintGrid(el, view, selectedIndex, kind) {
                 index: i,
                 originEl: slot,
                 openUid: state.openUid,
+                allowTrade: TradeUi ? TradeUi.containerAllowsTrade(kind) : false,
                 clientX: ev.clientX,
                 clientY: ev.clientY
             });
@@ -2228,7 +2257,7 @@ function paintGrid(el, view, selectedIndex, kind) {
             const state = containerSlotState(it, containerId, i);
             const intents = inventoryIntentsFromEvent(ev, 'right', state);
             if (!intents) {
-                showInvMenu(ev.clientX, ev.clientY, it, containerId, i);
+                showInvMenu(ev.clientX, ev.clientY, it, containerId, i, TradeUi ? TradeUi.containerAllowsTrade(kind) : false);
                 return;
             }
             applyInventoryIntents(intents, {
@@ -2238,6 +2267,7 @@ function paintGrid(el, view, selectedIndex, kind) {
                 index: i,
                 originEl: slot,
                 openUid: state.openUid,
+                allowTrade: TradeUi ? TradeUi.containerAllowsTrade(kind) : false,
                 clientX: ev.clientX,
                 clientY: ev.clientY
             });
@@ -3850,6 +3880,12 @@ function runPending() {
         if (ui) ui.arrive(p);
     } else if (p.type === 'USE' || p.type === 'OPEN_CONTAINER') {
         send(C2S.USE, encodeTileUse(p.x, p.y, p.z));
+    } else if (p.type === 'TRADE_OFFER') {
+        const ent = p.partnerId ? others.get(p.partnerId) : null;
+        const partner = ent
+            ? entityTradePartner(ent)
+            : (p.partnerId ? { id: p.partnerId >>> 0, player: false } : null);
+        commitTradeOffer(p.from, partner, p.hops | 0);
     }
 }
 
@@ -4095,6 +4131,61 @@ function hideCtx() {
     hideStackSplitModal();
 }
 
+function setTradeCursor(on) {
+    if (typeof document === 'undefined' || !document.documentElement) return;
+    const root = document.documentElement;
+    if (on) {
+        root.setAttribute('data-trade-aim', '1');
+        root.classList.add('cursor-targeting');
+        return;
+    }
+    root.removeAttribute('data-trade-aim');
+    root.classList.remove('cursor-targeting');
+}
+
+function clearTradeAim() {
+    pendingTrade = null;
+    if (pendingCanvasButton === 'trade') pendingCanvasButton = null;
+    if (pendingAfterWalk && pendingAfterWalk.type === 'TRADE_OFFER') stopWalk();
+    setTradeCursor(false);
+}
+
+function armTradeAim(from, item) {
+    if (!from) return;
+    if (pendingAfterWalk && pendingAfterWalk.type === 'TRADE_OFFER') stopWalk();
+    pendingUseWith = null;
+    pendingTrade = from;
+    setTradeCursor(true);
+    const name = item && item.id ? itemLabel(item.id) : '';
+    fct(name ? ('Trade ' + name + ' with…') : 'Trade with…');
+}
+
+function ensureTrade() {
+    if (tradeUi || !TradeUi) return tradeUi;
+    tradeUi = TradeUi.attach({
+        floatRoot: inventoryFloatRoot,
+        wireDrag: wireFloatHeaderDrag,
+        raise: bringFloatToFront,
+        place: function (el) {
+            const grid = $('backpackGrid');
+            placeNewFloat(el, grid ? { origin: 'slot', slotEl: grid } : { origin: 'slot' });
+        },
+        spriteUrl: function (id) { return resolveItemSpriteUrl(id, visualGenre()); },
+        itemLabel: itemLabel,
+        onLook: function (x, y, id, count) { showItemPopover(x, y, id, count, true); },
+        onAccept: function () { send(C2S.TRADE_ACCEPT, new Uint8Array(0)); },
+        onCancel: function () { send(C2S.TRADE_CANCEL, new Uint8Array(0)); },
+        onVisibility: function () { syncFloatRootAria(); }
+    });
+    return tradeUi;
+}
+
+function closeTradeWindow() {
+    clearTradeAim();
+    if (tradeUi && tradeUi.applyClose) tradeUi.applyClose();
+    syncFloatRootAria();
+}
+
 function ctxMenuHost() {
     return document.fullscreenElement
         || document.webkitFullscreenElement
@@ -4217,8 +4308,18 @@ function ensureBrowse() {
                 ev || null
             );
         },
+        tradeLabel: function (it) {
+            if (!TradeUi) return '';
+            const rows = TradeUi.withTradeEntry([], it);
+            return rows.length ? rows[0].label : '';
+        },
+        armTrade: function (rec, it) {
+            if (!rec || !it || !it.id) return;
+            armTradeAim(tileMoveLoc(rec.x, rec.y, rec.z, it.stackIndex | 0), it);
+        },
         armUseWith: function (it) {
             if (!it || !it.id) return;
+            clearTradeAim();
             pendingUseWith = it.id;
             fct('Use ' + itemLabel(it.id) + ' with…');
         }
@@ -4235,6 +4336,7 @@ function showCanvasMenu(hit, clientX, clientY) {
     }
     hideItemPopover(true);
     const entries = Mouse.buildCanvasContextMenuEntries(hit);
+    insertGroundTradeEntry(entries, hit);
     el.textContent = '';
     entries.forEach(function (entry) {
         const b = document.createElement('button');
@@ -4265,6 +4367,8 @@ function showCanvasMenu(hit, clientX, clientY) {
                 if (ui) ui.chooseTile(hit.x, hit.y, hit.z);
             } else if (entry.action === 'USE_STAIR') {
                 applyIntents([{ type: 'USE_STAIR' }]);
+            } else if (entry.action === 'TRADE' && entry.trade) {
+                armTradeAim(entry.trade.from, entry.trade.item);
             } else if (entry.action === 'WALK') {
                 applyIntents([{ type: 'START_AUTOWALK', dest: { x: hit.x, y: hit.y, z: hit.z } }]);
             }
@@ -4274,7 +4378,67 @@ function showCanvasMenu(hit, clientX, clientY) {
     placeCtxMenu(el, clientX, clientY);
 }
 
-function showInvMenu(clientX, clientY, item, containerId, index) {
+function insertGroundTradeEntry(entries, hit) {
+    if (!TradeUi || typeof TradeUi.groundOffer !== 'function' || !entries) return;
+    const offer = TradeUi.groundOffer(hit);
+    if (!offer) return;
+    const row = { action: 'TRADE', label: TradeUi.MENU_LABEL, trade: offer };
+    let at = -1;
+    for (let i = 0; i < entries.length; i++) {
+        const action = entries[i] && entries[i].action;
+        if (action === 'BROWSE_FIELD' || action === 'USE_STAIR' || action === 'WALK') {
+            at = i;
+            break;
+        }
+    }
+    if (at >= 0) entries.splice(at, 0, row);
+    else entries.push(row);
+}
+
+function entityTradePartner(ent) {
+    if (!ent || ent.id == null || ent.id === '') return null;
+    if (isNpcEntity(ent) || isCreatureEntity(ent) || (self && ent.id === self.id)) {
+        return { id: ent.id >>> 0, player: false };
+    }
+    if (ent.x == null || ent.y == null) return { id: ent.id >>> 0, player: false };
+    return { id: ent.id >>> 0, x: ent.x, y: ent.y, z: ent.z, player: true };
+}
+
+function partnerForAim(hit, decision) {
+    if (hit && hit.creature) return entityTradePartner(hit.creature);
+    if (decision && decision.partnerId) return { id: decision.partnerId >>> 0, player: false };
+    return null;
+}
+
+function commitTradeOffer(from, partner, hops) {
+    if (!from || !self || !TradeUi || typeof TradeUi.planOffer !== 'function') return;
+    const plan = TradeUi.planOffer(self, from, partner, function (p, tile, range) {
+        return approachTile(p, tile, range);
+    });
+    if (!plan || plan.type === 'fct') {
+        fct(plan && plan.text ? plan.text : 'There is no way.');
+        return;
+    }
+    if (plan.type === 'walk') {
+        const limit = TradeUi.WALK_HOPS != null ? TradeUi.WALK_HOPS : 2;
+        if ((hops | 0) >= limit) {
+            fct('There is no way.');
+            return;
+        }
+        startWalk(plan.dest, {
+            type: 'TRADE_OFFER',
+            from: from,
+            partnerId: plan.partnerId >>> 0,
+            hops: (hops | 0) + 1
+        });
+        return;
+    }
+    if (plan.type === 'send') {
+        send(C2S.TRADE_OFFER, encodeTradeOffer(from, plan.partnerId >>> 0));
+    }
+}
+
+function showInvMenu(clientX, clientY, item, containerId, index, allowTrade) {
     const el = $('ctx-menu');
     if (!el) return;
     hideItemPopover(true);
@@ -4311,10 +4475,26 @@ function showInvMenu(clientX, clientY, item, containerId, index) {
         rows.push({
             label: 'Use with',
             fn: function () {
+                clearTradeAim();
                 pendingUseWith = item.id;
                 fct('Use ' + itemLabel(item.id) + ' with…');
             }
         });
+    }
+    if (allowTrade && item && item.id && TradeUi) {
+        const tradeRows = TradeUi.withTradeEntry([], item);
+        if (tradeRows.length) {
+            rows.push({
+                label: tradeRows[0].label,
+                fn: function () {
+                    armTradeAim({
+                        kind: 'container',
+                        containerUid: containerId,
+                        index: index | 0
+                    }, item);
+                }
+            });
+        }
     }
     rows.forEach(function (entry) {
         const b = document.createElement('button');
@@ -4532,7 +4712,7 @@ function finishCanvasGroundDrag(ev) {
             }), drag.item);
             return true;
         }
-        if (under.closest('#loot-panel, #npc-dialog, #npc-shop')) return true;
+        if (under.closest('#loot-panel, #npc-dialog, #npc-shop, #trade-window')) return true;
     }
     const dest = canvasTile(ev);
     if (!dest) return true;
@@ -4580,6 +4760,18 @@ function flushPendingCanvasAction(ev) {
         rightPressed: buttonsDown.right
     })) {
         canvasLookNow(ev);
+        return;
+    }
+    if (pendingCanvasButton === 'trade') {
+        if (button !== 'left') return;
+        pendingCanvasButton = null;
+        const from = pendingTrade;
+        const hit = hitFromTile(canvasTile(ev));
+        const decision = TradeUi
+            ? TradeUi.mapAim(hit, self && self.id)
+            : { send: false, partnerId: 0 };
+        clearTradeAim();
+        if (decision.send && from) commitTradeOffer(from, partnerForAim(hit, decision), 0);
         return;
     }
     if (pendingCanvasButton === 'use-with') {
@@ -4636,6 +4828,14 @@ function onCanvasPointer(ev) {
         rightPressed: buttonsDown.right
     })) {
         canvasLookNow(ev);
+        return;
+    }
+    if (pendingTrade && button === 'right') {
+        clearTradeAim();
+        return;
+    }
+    if (pendingTrade && tile && button === 'left') {
+        pendingCanvasButton = 'trade';
         return;
     }
     if (pendingUseWith && tile && button === 'left') {
@@ -4862,6 +5062,7 @@ function onFrame(bytes, tokenHex) {
     }
     if (opcode === S2C.KICK) {
         log('kicked reason=' + r.u8(), 'err');
+        closeTradeWindow();
         return;
     }
     if (opcode === S2C.APPEAR) {
@@ -5302,6 +5503,17 @@ function onFrame(bytes, tokenHex) {
         if (ui && msg) ui.applySnapshot(msg);
         return;
     }
+    if (opcode === S2C.TRADE) {
+        const msg = typeof decodeTrade === 'function' ? decodeTrade(r.b.subarray(r.o)) : null;
+        const ui = ensureTrade();
+        if (ui && msg) ui.applySnapshot(msg);
+        return;
+    }
+    if (opcode === S2C.TRADE_CLOSE) {
+        if (tradeUi && tradeUi.applyClose) tradeUi.applyClose();
+        syncFloatRootAria();
+        return;
+    }
     if (opcode === S2C.FIELD_GONE) {
         const g = typeof decodeFieldGone === 'function' ? decodeFieldGone(r.b.subarray(r.o)) : {
             x: r.i16(),
@@ -5337,6 +5549,7 @@ if (typeof window !== 'undefined') {
 
 function leaveWorld() {
     flushMinimap();
+    closeTradeWindow();
     setSessionBadge('LEAVING');
     if (pingTimer) {
         clearInterval(pingTimer);
@@ -5357,6 +5570,7 @@ function connect(cfg, tokenHex) {
     groundDrag = null;
     removeGroundDragAvatar();
     if (browseUi) browseUi.reset();
+    closeTradeWindow();
     fields = new Map();
     pendingUseWith = null;
     seenAt = new Map();
@@ -5510,6 +5724,15 @@ if (canvas) {
 window.addEventListener('pointerdown', function (ev) {
     if (ev.button === 0) buttonsDown.left = true;
     if (ev.button === 2) buttonsDown.right = true;
+    if (!pendingTrade) return;
+    if (ev.button !== 0 && ev.button !== 2) return;
+    const t = ev.target;
+    if (t && typeof t.closest === 'function') {
+        if (t.closest('#ctx-menu')) return;
+        if (canvas && (t === canvas || (canvas.contains && canvas.contains(t)))) return;
+        if (t.closest('#combatCreaturesList .entity-list-row')) return;
+    }
+    clearTradeAim();
 }, true);
 window.addEventListener('mousedown', function (ev) {
     if (ev.button === 0) buttonsDown.left = true;
@@ -5580,6 +5803,7 @@ window.addEventListener('keydown', function (ev) {
             stopWalk();
         }
         hideCtx();
+        clearTradeAim();
         if (groundDrag) {
             groundDrag = null;
             currentDrag = null;

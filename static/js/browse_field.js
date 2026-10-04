@@ -85,6 +85,22 @@
         return /(^|_)rope(_|$)/.test(id) || /(^|_)shovel(_|$)/.test(id);
     }
 
+    function menuRows(it, deps) {
+        const d = deps || {};
+        const rows = [
+            { label: 'Look', action: 'LOOK' },
+            { label: 'Use', action: 'USE' }
+        ];
+        if (isUseWithItem(it)) rows.push({ label: 'Use with…', action: 'USE_WITH' });
+        if (it && ((it.flags | 0) & 1)) rows.push({ label: 'Open', action: 'OPEN' });
+        rows.push({ label: 'Pick up', action: 'PICKUP' });
+        if (typeof d.tradeLabel === 'function') {
+            const label = d.tradeLabel(it);
+            if (label) rows.push({ label: String(label), action: 'TRADE' });
+        }
+        return rows;
+    }
+
     function isBrowseSurface(node) {
         if (!node) return false;
         if (node.dataset && node.dataset.browseField != null && node.dataset.browseField !== '') {
@@ -154,42 +170,7 @@
             if (!el) return;
             if (typeof d.hideChrome === 'function') d.hideChrome();
             el.textContent = '';
-            const rows = [
-                {
-                    label: 'Look',
-                    fn: function () {
-                        if (typeof d.showLook === 'function') d.showLook(clientX, clientY, it.id, it.count);
-                    }
-                },
-                {
-                    label: 'Use',
-                    fn: function () {
-                        if (typeof d.useItem === 'function') d.useItem(it.uid);
-                    }
-                }
-            ];
-            if (isUseWithItem(it)) {
-                rows.push({
-                    label: 'Use with…',
-                    fn: function () {
-                        if (typeof d.armUseWith === 'function') d.armUseWith(it);
-                    }
-                });
-            }
-            if ((it.flags | 0) & 1) {
-                rows.push({
-                    label: 'Open',
-                    fn: function () {
-                        if (typeof d.openBag === 'function') d.openBag(it.uid, it.id);
-                    }
-                });
-            }
-            rows.push({
-                label: 'Pick up',
-                fn: function (ev) {
-                    if (typeof d.pickup === 'function') d.pickup(rec, it, ev);
-                }
-            });
+            const rows = menuRows(it, d);
             for (let i = 0; i < rows.length; i++) {
                 const entry = rows[i];
                 const b = el.ownerDocument.createElement('button');
@@ -198,7 +179,19 @@
                 b.textContent = entry.label;
                 b.onclick = function (ev) {
                     if (typeof d.hideChrome === 'function') d.hideChrome();
-                    entry.fn(ev);
+                    if (entry.action === 'LOOK') {
+                        if (typeof d.showLook === 'function') d.showLook(clientX, clientY, it.id, it.count);
+                    } else if (entry.action === 'USE') {
+                        if (typeof d.useItem === 'function') d.useItem(it.uid);
+                    } else if (entry.action === 'USE_WITH') {
+                        if (typeof d.armUseWith === 'function') d.armUseWith(it);
+                    } else if (entry.action === 'OPEN') {
+                        if (typeof d.openBag === 'function') d.openBag(it.uid, it.id);
+                    } else if (entry.action === 'PICKUP') {
+                        if (typeof d.pickup === 'function') d.pickup(rec, it, ev);
+                    } else if (entry.action === 'TRADE') {
+                        if (typeof d.armTrade === 'function') d.armTrade(rec, it);
+                    }
                 };
                 el.appendChild(b);
             }
@@ -466,6 +459,7 @@
         isBrowseSurface: isBrowseSurface,
         dropPlan: dropPlan,
         isUseWithItem: isUseWithItem,
+        menuRows: menuRows,
         attach: attach
     };
 });
