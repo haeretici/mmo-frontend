@@ -3,7 +3,8 @@
  * Settings shell and Character float.
  * One instance, second icon press focuses and raises, Escape closes
  * Settings, the Controls page lists the five play controls, Hotkeys
- * lists action-bar profiles, dock slots, and general hotkeys. The character card lists six lines without
+ * lists action-bar profiles, dock slots, and general hotkeys. The character card lists
+ * name, vocation, level, pools, experience, food, and capacity without
  * Bootstrap .modal / .show.
  */
 
@@ -578,7 +579,7 @@ test('control changes reveal loot or talk, save the bag, and survive a reopen', 
     assert.strictEqual(lootWrap.hidden, true);
 });
 
-test('Character stays closed until a character exists, then lists the six lines', () => {
+test('Character stays closed until a character exists, then lists food and capacity', () => {
     const env = boot();
     click(env.characterBtn);
     const panel = env.ui.characterEl();
@@ -611,6 +612,48 @@ test('Character stays closed until a character exists, then lists the six lines'
     assert.ok(text.includes('30/50'));
     assert.ok(text.includes('Experience'));
     assert.ok(text.includes('400'));
+    assert.ok(text.includes('Food'));
+    assert.ok(text.includes('00:00'));
+    assert.ok(text.includes('Capacity'));
+    assert.ok(text.includes('—'));
+    const food = panel.querySelector('[data-field="food"]');
+    const cap = panel.querySelector('[data-field="capacity"]');
+    assert.ok(food.parentNode.classList.contains('is-hungry'));
+    assert.strictEqual(food.parentNode.getAttribute('title'), 'You are hungry');
+    assert.ok(!cap.parentNode.classList.contains('is-low'));
+    assert.strictEqual(cap.parentNode.getAttribute('title'), '');
+
+    env.getWho().foodSeconds = 180;
+    env.getWho().cap = 350;
+    env.getWho().capMax = 600;
+    env.ui.syncCharacter(env.getWho());
+    assert.ok(panel.textContent.includes('03:00'));
+    assert.ok(!panel.textContent.includes('00:00'));
+    assert.ok(panel.textContent.includes('350/600'));
+    assert.ok(!food.parentNode.classList.contains('is-hungry'));
+    assert.strictEqual(food.parentNode.getAttribute('title'), 'Food');
+    assert.strictEqual(cap.parentNode.getAttribute('title'), 'You have 350 of 600 capacity left');
+    assert.ok(!cap.parentNode.classList.contains('is-low'));
+
+    env.getWho().foodSeconds = 65;
+    env.ui.syncCharacter(env.getWho());
+    assert.ok(panel.textContent.includes('01:05'));
+    assert.ok(!food.parentNode.classList.contains('is-hungry'));
+
+    env.getWho().foodSeconds = 0;
+    env.ui.syncCharacter(env.getWho());
+    assert.ok(panel.textContent.includes('00:00'));
+    assert.ok(food.parentNode.classList.contains('is-hungry'));
+
+    env.getWho().cap = 120;
+    env.ui.syncCharacter(env.getWho());
+    assert.ok(panel.textContent.includes('120/600'));
+    assert.ok(cap.parentNode.classList.contains('is-low'));
+
+    env.getWho().cap = 0;
+    env.ui.syncCharacter(env.getWho());
+    assert.ok(panel.textContent.includes('0/600'));
+    assert.ok(cap.parentNode.classList.contains('is-low'));
 
     const z1 = Number(panel.style.zIndex);
     click(env.characterBtn);

@@ -324,9 +324,26 @@ function underfootTile() {
     return Path.tileAt(viewport, self.x, self.y);
 }
 
+function characterView() {
+    if (!self) return null;
+    return {
+        name: self.name,
+        vocation: self.vocation,
+        level: self.level,
+        hp: self.hp,
+        hpMax: self.hpMax,
+        mp: self.mp,
+        mpMax: self.mpMax,
+        experience: self.experience,
+        foodSeconds: foodRemainingSec(),
+        cap: capVal,
+        capMax: capMax
+    };
+}
+
 function setHud() {
     if (typeof EngineClientWindow !== 'undefined' && EngineClientWindow.syncCharacter) {
-        EngineClientWindow.syncCharacter(self);
+        EngineClientWindow.syncCharacter(characterView());
     }
     if (!self) return;
     const floor = viewport ? viewport.z : self.z;
@@ -553,6 +570,9 @@ function renderFoodStatus() {
         row.title = hungry ? 'You are hungry' : 'Food';
     }
     renderStatusIcons();
+    if (self && typeof EngineClientWindow !== 'undefined' && EngineClientWindow.syncCharacter) {
+        EngineClientWindow.syncCharacter(characterView());
+    }
 }
 
 function renderStatusIcons() {
@@ -2394,7 +2414,14 @@ function renderEquipment() {
         };
     }
     const capEl = $('activeEqCap');
-    if (capEl) capEl.textContent = capVal != null ? String(capVal) : '—';
+    if (capEl) {
+        capEl.textContent = capVal != null ? String(capVal) : '—';
+        const capTip = capVal != null && capMax != null
+            ? 'You have ' + capVal + ' of ' + capMax + ' capacity left'
+            : '';
+        capEl.title = capTip;
+        if (capEl.parentNode) capEl.parentNode.title = capTip;
+    }
     const soulEl = $('activeEqSoul');
     if (soulEl) soulEl.textContent = '100';
     renderFoodStatus();
@@ -5802,7 +5829,7 @@ document.addEventListener('DOMContentLoaded', function () {
             document: document,
             window: window,
             place: FloatPlace,
-            getCharacter: function () { return self; },
+            getCharacter: function () { return characterView(); },
             root: inventoryFloatRoot()
         });
         if (clientWindow && clientWindow.bindControls) {

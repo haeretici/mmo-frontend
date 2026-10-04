@@ -2,6 +2,8 @@
 
 /**
  * In-page Settings shell and Character float for /play.
+ * The character float lists name, vocation, level, pools, experience,
+ * remaining food (MM:SS), and capacity (free/total).
  * One instance of each. Placement and viewport clamp use
  * float_panel_place.js. Title-bar drag uses float_panel_drag.js,
  * the same gesture as bag, dialog, shop, and loot headers.
@@ -24,8 +26,63 @@
         ['level', 'Level'],
         ['hp', 'HP'],
         ['mp', 'MP'],
-        ['experience', 'Experience']
+        ['experience', 'Experience'],
+        ['food', 'Food'],
+        ['capacity', 'Capacity']
     ];
+
+    /**
+     * MM:SS. Minutes are floor(seconds / 60), the same shape as the legacy skills window.
+     * @param {number} sec
+     * @returns {string}
+     */
+    function formatFoodClock(sec) {
+        const s = Math.max(0, Math.floor(Number(sec) || 0));
+        const minutes = Math.floor(s / 60);
+        const seconds = s % 60;
+        return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    /**
+     * @param {*} value
+     * @returns {number|null}
+     */
+    function capacityNumber(value) {
+        if (value == null || value === '') return null;
+        const n = Math.floor(Number(value));
+        if (!Number.isFinite(n) || n < 0) return null;
+        return n;
+    }
+
+    /**
+     * @param {number|null} cap
+     * @param {number|null} capMax
+     * @returns {string}
+     */
+    function formatCapacity(cap, capMax) {
+        if (cap == null || capMax == null) return '—';
+        return String(cap) + '/' + String(capMax);
+    }
+
+    /**
+     * Legacy skills window paints capacity red at 0 or at 20% of total.
+     * @param {number|null} cap
+     * @param {number|null} capMax
+     * @returns {boolean}
+     */
+    function capacityIsLow(cap, capMax) {
+        if (cap == null || capMax == null) return false;
+        if (cap <= 0) return true;
+        if (capMax <= 0) return false;
+        return (cap / capMax) <= 0.2;
+    }
+
+    function setTitle(node, text) {
+        if (!node) return;
+        const tip = text == null ? '' : String(text);
+        if (typeof node.setAttribute === 'function') node.setAttribute('title', tip);
+        node.title = tip;
+    }
 
     /**
      * @param {string|null|undefined} vocationId
@@ -49,8 +106,11 @@
     }
 
     /**
+     * `foodSeconds` is the remaining satiation, already counted down by the caller.
+     * `cap` / `capMax` are free and total capacity. Null means the equipment
+     * message has not arrived yet.
      * @param {*} src
-     * @returns {{ name: string, vocation: string, level: number, hp: number, hpMax: number, mp: number, mpMax: number, experience: number }|null}
+     * @returns {{ name: string, vocation: string, level: number, hp: number, hpMax: number, mp: number, mpMax: number, experience: number, foodSeconds: number, cap: number|null, capMax: number|null }|null}
      */
     function snapshotOf(src) {
         if (!src) return null;
@@ -62,7 +122,10 @@
             hpMax: src.hpMax != null ? src.hpMax : 0,
             mp: src.mp != null ? src.mp : 0,
             mpMax: src.mpMax != null ? src.mpMax : 0,
-            experience: src.experience != null ? src.experience : 0
+            experience: src.experience != null ? src.experience : 0,
+            foodSeconds: Math.max(0, Math.floor(Number(src.foodSeconds) || 0)),
+            cap: capacityNumber(src.cap != null ? src.cap : src.capVal),
+            capMax: capacityNumber(src.capMax)
         };
     }
 
@@ -115,7 +178,9 @@
             title: 'Character',
             closeLabel: 'Close character'
         });
-        const characterFields = appendCharacterLines(doc, characterPanel);
+        const characterUi = appendCharacterLines(doc, characterPanel);
+        const characterFields = characterUi.values;
+        const characterRows = characterUi.rows;
         const settingsBody = appendSettingsBody(doc, settingsPanel);
         const controlRefs = settingsBody.controls;
         const hotkeysUi = settingsBody.hotkeys;
@@ -193,7 +258,7 @@
             const h = Number(panel.offsetHeight) || 0;
             return {
                 w: w > 0 ? w : (settings ? 560 : 240),
-                h: h > 0 ? h : (settings ? 360 : 180)
+                h: h > 0 ? h : (settings ? 360 : 260)
             };
         }
 
@@ -348,21 +413,34 @@
         }
 
         function fillCharacter(snap) {
+            const hungry = (snap.foodSeconds | 0) <= 0;
+            const lowCap = capacityIsLow(snap.cap, snap.capMax);
             const values = {
                 name: snap.name,
                 vocation: vocationLabel(snap.vocation, classes),
                 level: String(snap.level != null ? snap.level : 0),
                 hp: String(snap.hp != null ? snap.hp : 0) + '/' + String(snap.hpMax != null ? snap.hpMax : 0),
                 mp: String(snap.mp != null ? snap.mp : 0) + '/' + String(snap.mpMax != null ? snap.mpMax : 0),
-                experience: String(snap.experience != null ? snap.experience : 0)
+                experience: String(snap.experience != null ? snap.experience : 0),
+                food: formatFoodClock(snap.foodSeconds),
+                capacity: formatCapacity(snap.cap, snap.capMax)
             };
-            const sig = CHARACTER_FIELDS.map(function (pair) { return values[pair[0]]; }).join('\n');
+            const sig = CHARACTER_FIELDS.map(function (pair) { return values[pair[0]]; }).join('\n')
+                + '\n' + (hungry ? '1' : '0') + (lowCap ? '1' : '0');
             if (characterPanel._lineSig === sig) return;
             characterPanel._lineSig = sig;
             CHARACTER_FIELDS.forEach(function (pair) {
                 const node = characterFields[pair[0]];
                 if (node) node.textContent = values[pair[0]];
             });
+            const foodRow = characterRows.food;
+            if (foodRow && foodRow.classList) foodRow.classList.toggle('is-hungry', hungry);
+            setTitle(foodRow, hungry ? 'You are hungry' : 'Food');
+            const capRow = characterRows.capacity;
+            if (capRow && capRow.classList) capRow.classList.toggle('is-low', lowCap);
+            setTitle(capRow, snap.cap != null && snap.capMax != null
+                ? 'You have ' + snap.cap + ' of ' + snap.capMax + ' capacity left'
+                : '');
         }
 
         function openSettings() {
@@ -1004,10 +1082,12 @@
     function appendCharacterLines(doc, panel) {
         const body = doc.createElement('div');
         body.className = 'float-body client-window-lines';
-        const fields = {};
+        const values = {};
+        const rows = {};
         CHARACTER_FIELDS.forEach(function (pair) {
             const row = doc.createElement('p');
             row.className = 'client-window-line';
+            if (typeof row.setAttribute === 'function') row.setAttribute('data-line', pair[0]);
             const label = doc.createElement('span');
             label.className = 'client-window-label';
             label.textContent = pair[1];
@@ -1018,10 +1098,11 @@
             row.appendChild(label);
             row.appendChild(value);
             body.appendChild(row);
-            fields[pair[0]] = value;
+            values[pair[0]] = value;
+            rows[pair[0]] = row;
         });
         panel.appendChild(body);
-        return fields;
+        return { values: values, rows: rows };
     }
 
     let attached = null;

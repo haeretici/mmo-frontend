@@ -1735,6 +1735,22 @@ canvas#world {
     color: var(--text-main, #{$text-main});
     text-align: right;
   }
+
+  .client-window-line.is-hungry .client-window-value {
+    color: #f59e0b;
+  }
+
+  .client-window-line.is-low .client-window-value {
+    color: #b22222;
+  }
+}
+
+.skills-panel-food.is-hungry .skills-panel-value {
+  color: #f59e0b;
+}
+
+.equipment-card .eq-status-icon.is-hungry {
+  color: #f59e0b;
 }
 
 .float-panel.client-window-settings {
