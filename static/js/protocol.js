@@ -119,6 +119,26 @@
         'healing', 'poison', 'lifedrain', 'manadrain'
     ]);
 
+    /** STATS zone byte. Bit 0 is the full protection-zone package. */
+    const ZONE_FLAG_PZ = 1;
+
+    /** Wire ids for the STATS condition tail. Keep in lockstep with server opcodes.js. */
+    const STATUS_KIND_NAMES = Object.freeze([
+        'poison',
+        'fire',
+        'ice',
+        'energy',
+        'bleed',
+        'curse',
+        'holy',
+        'slow',
+        'haste',
+        'invisible',
+        'regen',
+        'attributes',
+        'mana_shield'
+    ]);
+
     function swingElementId(name) {
         if (typeof name === 'number' && Number.isFinite(name)) {
             const n = name | 0;
@@ -448,6 +468,33 @@
         return out;
     }
 
+    function decodeStats(payload) {
+        if (!payload || payload.length < 20) return null;
+        const r = new Reader(payload);
+        const out = {
+            id: r.u32(),
+            hp: r.u32(),
+            hpMax: r.u32(),
+            mp: r.u32(),
+            mpMax: r.u32(),
+            foodSeconds: 0,
+            inProtectionZone: false,
+            conditions: []
+        };
+        if (r.rest().length >= 2) out.foodSeconds = r.u16();
+        if (r.rest().length >= 2) {
+            const zone = r.u8();
+            const n = Math.min(r.u8(), 16);
+            out.inProtectionZone = (zone & ZONE_FLAG_PZ) !== 0;
+            for (let i = 0; i < n; i++) {
+                if (!r.rest().length) break;
+                const kind = STATUS_KIND_NAMES[r.u8()] || '';
+                if (kind) out.conditions.push({ kind: kind });
+            }
+        }
+        return out;
+    }
+
     function decodeEquipment(payload) {
         const r = new Reader(payload);
         const cap = r.u16();
@@ -469,6 +516,8 @@
         SWING_FLAG,
         SWING_ELEMENT,
         SWING_ELEMENT_NAMES,
+        ZONE_FLAG_PZ,
+        STATUS_KIND_NAMES,
         SKILL_ORDER,
         LOC_KIND,
         OPEN_BAG_SELF_INDEX,
@@ -490,6 +539,7 @@
         decodeCastFx,
         decodeAppear,
         decodeSwing,
+        decodeStats,
         decodeField,
         decodeFieldGone,
         decodeSay,

@@ -35,7 +35,8 @@ function tileColor(t) {
     return 'rgb(' + Math.round(40 + k * 140) + ',' + Math.round(50 + k * 120) + ',55)';
 }
 
-const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, encodeBrowseField, decodeBrowseField, decodeCastFx, decodeAppear, decodeSwing, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, rttMs, Reader } = EngineProtocol;
+const { C2S, S2C, APPEAR_FLAG, SKILL_ORDER, REASON, LOC_KIND, OPEN_BAG_SELF_INDEX, hexToBytes, encodeFrame, u32buf, encodeTileUse, encodeUseItemWith, encodeStrPayload, encodeContainerSlot, encodeEquip, encodeUnequip, encodeCloseBag, encodeMoveItem, encodeMovePath, encodeCast, encodeBrowseField, decodeBrowseField, decodeCastFx, decodeAppear, decodeSwing, decodeStats, decodeField, decodeFieldGone, decodeSay, swingElementName, fieldCreatedAtMs, rttMs, Reader } = EngineProtocol;
+const StatusIcons = typeof EngineStatusIcons !== 'undefined' ? EngineStatusIcons : null;
 const Mouse = EngineMouse;
 const InvMouse = typeof EngineInventoryMouse !== 'undefined' ? EngineInventoryMouse : null;
 const Path = EnginePath;
@@ -53,6 +54,9 @@ const CombatFx = typeof EngineCombatFx !== 'undefined' ? EngineCombatFx : null;
 const ContainerDrop = typeof EngineContainerDrop !== 'undefined' ? EngineContainerDrop : null;
 const SkillProgress = typeof EngineSkillProgress !== 'undefined' ? EngineSkillProgress : null;
 const BrowseField = typeof EngineBrowseField !== 'undefined' ? EngineBrowseField : null;
+const MinimapStore = typeof EngineMinimapStore !== 'undefined' ? EngineMinimapStore : null;
+const MinimapView = typeof EngineMinimapView !== 'undefined' ? EngineMinimapView : null;
+const MinimapPath = typeof EngineMinimapPath !== 'undefined' ? EngineMinimapPath : null;
 const tilemapCache = Visual && typeof Visual.createTilemapCache === 'function' ? Visual.createTilemapCache({ margin: 2 }) : null;
 
 let ws = null;
@@ -105,6 +109,7 @@ let selectedEquipSlot = null;
 let walkDest = null;
 let walkBusy = false;
 let walkQueued = false;
+let walkLeft = 0;
 let pendingAfterWalk = null;
 let chaseWalk = false;
 const GeneralHotkeys = typeof EngineGeneralHotkeys !== 'undefined' ? EngineGeneralHotkeys : null;
@@ -520,6 +525,47 @@ function skillFillStyle(percent, rest) {
     return 'linear-gradient(to right, #31582f ' + pct + '%, ' + rest + ' ' + pct + '%)';
 }
 
+/** MM:SS. Minutes are floor(seconds / 60), the same shape as the legacy skills window. */
+function formatFoodClock(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    const minutes = Math.floor(s / 60);
+    const seconds = s % 60;
+    return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+}
+
+function foodRemainingSec() {
+    if (!self) return 0;
+    const base = Math.max(0, Math.floor(Number(self.foodSeconds) || 0));
+    const sync = self.foodSyncMs || 0;
+    const elapsed = Math.floor((nowMs() - sync) / 1000);
+    return Math.max(0, base - (elapsed > 0 ? elapsed : 0));
+}
+
+function renderFoodStatus() {
+    const sec = foodRemainingSec();
+    const label = formatFoodClock(sec);
+    const hungry = !!(self && sec <= 0);
+    const row = document.querySelector('#skillsPanelList [data-skill="food"]');
+    if (row) {
+        const val = row.querySelector('.skills-panel-value');
+        if (val && val.textContent !== label) val.textContent = label;
+        row.classList.toggle('is-hungry', hungry);
+        row.title = hungry ? 'You are hungry' : 'Food';
+    }
+    renderStatusIcons();
+}
+
+function renderStatusIcons() {
+    const bar = $('activeEqStatusBar');
+    if (!bar || !StatusIcons) return;
+    const source = self ? {
+        conditions: self.conditions,
+        inProtectionZone: !!self.inProtectionZone,
+        hungry: foodRemainingSec() <= 0
+    } : null;
+    StatusIcons.renderStatusBar(bar, source);
+}
+
 function renderSkills() {
     const el = $('skillsPanelList');
     if (!el) return;
@@ -529,6 +575,7 @@ function renderSkills() {
         p.className = 'text-muted small mb-0 p-1 muted';
         p.textContent = 'No character';
         el.appendChild(p);
+        renderFoodStatus();
         return;
     }
 
@@ -577,6 +624,19 @@ function renderSkills() {
         grid.appendChild(d);
     });
     el.appendChild(grid);
+
+    const food = document.createElement('div');
+    food.className = 'skills-panel-row skills-panel-food';
+    food.setAttribute('data-skill', 'food');
+    const foodName = document.createElement('span');
+    foodName.className = 'skills-panel-name';
+    foodName.textContent = 'Food';
+    const foodVal = document.createElement('span');
+    foodVal.className = 'skills-panel-value';
+    food.appendChild(foodName);
+    food.appendChild(foodVal);
+    el.appendChild(food);
+    renderFoodStatus();
 }
 
 function itemLabel(id) {
@@ -1175,6 +1235,30 @@ function resolveItemSpriteUrl(itemOrId, genre) {
     return '/sprites/' + g + '/equipment/alpha/' + stem + '.png';
 }
 
+function weaponPenalty(meta) {
+    if (!meta || typeof EngineEquipRules === 'undefined' || !EngineEquipRules.penalizedWeaponStats) {
+        return null;
+    }
+    return EngineEquipRules.penalizedWeaponStats(meta, self && self.level);
+}
+
+function weaponAtkText(meta) {
+    const pen = weaponPenalty(meta);
+    if (pen) {
+        const shown = Number(meta.extraAtk) > 0 ? (pen.atk + pen.extraAtk) : pen.atk;
+        return shown + ' (-' + pen.gap + ')';
+    }
+    if (meta && meta.atk != null && meta.atk > 0) return String(meta.atk);
+    return '';
+}
+
+function weaponDefText(meta) {
+    const pen = weaponPenalty(meta);
+    if (pen && pen.defense != null) return pen.defense + ' (-' + pen.gap + ')';
+    if (meta && meta.defense != null && meta.defense > 0) return String(meta.defense);
+    return '';
+}
+
 function formatItemTooltip(itemId, stackCount) {
     const meta = itemCatalog.get(itemId);
     const rawLabel = (meta && meta.label) || itemLabel(itemId);
@@ -1191,12 +1275,18 @@ function formatItemTooltip(itemId, stackCount) {
         const details = [];
         const kind = meta.category || meta.weaponType || meta.type || meta.slot;
         if (kind) details.push('Type: ' + kind);
-        if (meta.atk != null && meta.atk > 0) details.push('Atk: ' + meta.atk);
-        if (meta.defense != null && meta.defense > 0) details.push('Def: ' + meta.defense);
+        const atkText = weaponAtkText(meta);
+        const defText = weaponDefText(meta);
+        if (atkText) details.push('Atk: ' + atkText);
+        if (defText) details.push('Def: ' + defText);
         if (meta.armor != null && meta.armor > 0) details.push('Arm: ' + meta.armor);
         if (meta.range != null && meta.range > 1) details.push('Range: ' + meta.range);
         if (meta.twoHanded || meta.hands === 2) details.push('Two-handed');
         if (meta.weight != null && meta.weight > 0) details.push('Weight: ' + (meta.weight / 100).toFixed(2) + ' oz');
+        if (typeof EngineEquipRules !== 'undefined' && EngineEquipRules.wieldSentence) {
+            const wield = EngineEquipRules.wieldSentence(meta);
+            if (wield) lines.push(wield);
+        }
         if (details.length) {
             lines.push(details.join(' · '));
         }
@@ -1365,10 +1455,30 @@ function confirmPlannedAmount(plan, n) {
     send(C2S.MOVE_ITEM, encodeMoveItem(plan.from, plan.to, ContainerDrop.wireCount(plan.total, n)));
 }
 
+function blockDress(item, slot, mode, sourceSlot) {
+    if (typeof EngineEquipRules === 'undefined' || !EngineEquipRules.evaluateEquip) return false;
+    const decision = EngineEquipRules.evaluateEquip({
+        item: item,
+        meta: catalogMeta(item),
+        slot: slot || '',
+        sourceSlot: sourceSlot || '',
+        weapon: equipment.weapon || null,
+        weaponMeta: catalogMeta(equipment.weapon),
+        shield: equipment.shield || null,
+        shieldMeta: catalogMeta(equipment.shield),
+        player: self ? { level: self.level, vocation: self.vocation || '' } : null,
+        mode: mode || 'move'
+    });
+    if (decision.ok) return false;
+    fct(decision.message || 'You cannot dress this object there.');
+    return true;
+}
+
 function applyPlannedDrop(plan, item) {
     if (!plan || plan.type === 'NONE') return;
     if (plan.type === 'EQUIP' && !plan.slot) return;
     if (plan.type === 'EQUIP') {
+        if (blockDress(item, plan.slot, 'equip', '')) return;
         send(C2S.EQUIP, encodeEquip(plan.containerId, plan.index | 0, plan.slot));
         return;
     }
@@ -1382,6 +1492,10 @@ function applyPlannedDrop(plan, item) {
         return;
     }
     if (plan.type === 'MOVE_ITEM') {
+        if (plan.to && plan.to.kind === 'equipment') {
+            const sourceSlot = plan.from && plan.from.kind === 'equipment' ? plan.from.slot : '';
+            if (blockDress(item, plan.to.slot, 'move', sourceSlot)) return;
+        }
         send(C2S.MOVE_ITEM, encodeMoveItem(plan.from, plan.to, plan.count | 0));
     }
 }
@@ -1718,6 +1832,11 @@ function applyInventoryIntents(intents, ctx) {
     }
     if (type === 'USE_ITEM') {
         if (ctx.kind !== 'equipment' && ctx.containerId != null) {
+            if (typeof EngineEquipRules !== 'undefined'
+                && EngineEquipRules.itemUseEquips(item, catalogMeta(item))
+                && blockDress(item, '', 'equip', '')) {
+                return type;
+            }
             send(C2S.USE_ITEM, encodeContainerSlot(ctx.containerId, ctx.index));
         }
         return type;
@@ -1731,6 +1850,7 @@ function applyInventoryIntents(intents, ctx) {
     }
     if (type === 'EQUIP') {
         if (ctx.containerId != null) {
+            if (blockDress(item, '', 'equip', '')) return type;
             send(C2S.EQUIP, encodeEquip(ctx.containerId, ctx.index, ''));
         }
         return type;
@@ -2231,6 +2351,8 @@ function renderEquipment() {
                 renderEquipment();
                 renderBag();
             } else if (selectedBag >= 0 && bag && bag.containerId) {
+                const picked = slotAt(bag, selectedBag);
+                if (picked && blockDress(picked, key, 'equip', '')) return;
                 send(C2S.EQUIP, encodeEquip(bag.containerId, selectedBag, key));
             }
         };
@@ -2275,8 +2397,7 @@ function renderEquipment() {
     if (capEl) capEl.textContent = capVal != null ? String(capVal) : '—';
     const soulEl = $('activeEqSoul');
     if (soulEl) soulEl.textContent = '100';
-    const statusBar = $('activeEqStatusBar');
-    if (statusBar) statusBar.hidden = true;
+    renderFoodStatus();
     refreshActionBarSlots();
 }
 
@@ -3425,15 +3546,117 @@ function isWalkable(x, y) {
     return !blocked;
 }
 
+// Door, field, or chest only. Creatures stay out of the minimap byte.
+function minimapBakedBlocker(x, y, z) {
+    const zz = z | 0;
+    const f = fields.get(x + ',' + y + ',' + zz);
+    if (f && (f.kind === 'barrier' || f.kind === 'vine' || (f.flags & 1))) return true;
+    let blocked = false;
+    worldPins.forEach(function (pin) {
+        if (blocked) return;
+        if ((pin.x | 0) === x && (pin.y | 0) === y && (pin.z | 0) === zz) {
+            if (pin.kind === 'chest' || (pin.kind === 'door' && (pin.flags & 1))) blocked = true;
+        }
+    });
+    return blocked;
+}
+
+function syncMinimapView() {
+    if (!MinimapView || typeof MinimapView.sync !== 'function') return;
+    let live = null;
+    if (viewport) {
+        live = {
+            originX: viewport.originX,
+            originY: viewport.originY,
+            z: viewport.z,
+            width: viewport.width,
+            height: viewport.height,
+            tiles: viewport.tiles,
+            bakedBlocker: minimapBakedBlocker
+        };
+    }
+    MinimapView.sync({
+        mapId: mapId,
+        store: MinimapStore,
+        player: self ? { x: self.x, y: self.y, z: self.z } : null,
+        live: live
+    });
+}
+
+function noteMinimapWindow() {
+    syncMinimapView();
+    if (!MinimapStore || !viewport || !mapId) return;
+    const pending = MinimapStore.noteWindow(mapId, viewport, minimapBakedBlocker);
+    if (pending && typeof pending.then === 'function') pending.then(syncMinimapView, syncMinimapView);
+}
+
+function flushMinimap() {
+    if (!MinimapStore) return;
+    MinimapStore.flush();
+}
+
+function minimapLive() {
+    if (!viewport) return null;
+    return {
+        originX: viewport.originX,
+        originY: viewport.originY,
+        z: viewport.z,
+        width: viewport.width,
+        height: viewport.height,
+        tiles: viewport.tiles,
+        bakedBlocker: minimapBakedBlocker,
+        walkable: isWalkable
+    };
+}
+
+function routeWalkable(x, y) {
+    if (!self) return false;
+    if (!MinimapStore || !mapId || !MinimapPath) return isWalkable(x, y);
+    const cell = MinimapStore.queryCell(mapId, x | 0, y | 0, self.z | 0, minimapLive());
+    return !!(cell && cell.walkable);
+}
+
+function findRoute(from, dest) {
+    if (MinimapPath && MinimapStore && typeof MinimapPath.findPath === 'function') {
+        return MinimapPath.findPath(from, dest, routeWalkable);
+    }
+    return Path.findOrthogonalPath(from, dest, isWalkable);
+}
+
+function approachTile(from, target, range) {
+    if (MinimapPath && MinimapStore && typeof MinimapPath.nearestApproach === 'function') {
+        return MinimapPath.nearestApproach(from, target, range, routeWalkable);
+    }
+    return Path.nearestApproach(from, target, range, isWalkable);
+}
+
+function walkStepDecision(left, arrived, sameFloor) {
+    if (MinimapPath && typeof MinimapPath.afterStep === 'function') {
+        return MinimapPath.afterStep(left, arrived, sameFloor);
+    }
+    if (arrived) return 'arrive';
+    if (!sameFloor) return 'cancel-floor';
+    return 'wait';
+}
+
+function onMinimapClick(tile) {
+    startWalk(tile, null);
+}
+
 function sendWalkPath(dirs) {
     if (!dirs || !dirs.length) {
         if (walkQueued) send(C2S.MOVE_PATH, Uint8Array.of(0));
         walkQueued = false;
+        walkLeft = 0;
         return;
     }
-    const n = Math.min(165, dirs.length);
-    send(C2S.MOVE_PATH, encodeMovePath(n === dirs.length ? dirs : dirs.slice(0, n)));
+    const cap = MinimapPath && MinimapPath.PACKET_CAP ? MinimapPath.PACKET_CAP : 165;
+    const slice = MinimapPath && typeof MinimapPath.clipSteps === 'function'
+        ? MinimapPath.clipSteps(dirs, cap)
+        : dirs.slice(0, Math.min(165, dirs.length));
+    send(C2S.MOVE_PATH, encodeMovePath(slice));
     walkQueued = true;
+    walkLeft = slice.length;
 }
 
 function stopWalk(keepPending, silent) {
@@ -3441,6 +3664,7 @@ function stopWalk(keepPending, silent) {
     walkDest = null;
     walkBusy = false;
     walkQueued = false;
+    walkLeft = 0;
     chaseWalk = false;
     if (!keepPending) pendingAfterWalk = null;
     if (notify) send(C2S.MOVE_PATH, Uint8Array.of(0));
@@ -3452,6 +3676,7 @@ function cancelClickWalk() {
     pendingAfterWalk = null;
     chaseWalk = false;
     walkQueued = false;
+    walkLeft = 0;
     walkBusy = false;
     if (notify) send(C2S.MOVE_PATH, Uint8Array.of(0));
 }
@@ -3473,7 +3698,7 @@ function pumpChase() {
         if (chaseWalk) stopWalk();
         return;
     }
-    const dest = Path.nearestApproach(self, tgt, range, isWalkable);
+    const dest = approachTile(self, tgt, range);
     if (!dest) return;
     if ((self.x | 0) === (dest.x | 0) && (self.y | 0) === (dest.y | 0)) {
         if (chaseWalk) stopWalk();
@@ -3555,7 +3780,7 @@ function sendNextStep() {
         runPending();
         return;
     }
-    const path = Path.findOrthogonalPath(self, walkDest, isWalkable);
+    const path = findRoute(self, walkDest);
     if (!path || !path.length) {
         stopWalk(false, true);
         fct('There is no way.');
@@ -3565,16 +3790,28 @@ function sendNextStep() {
 }
 
 function startWalk(dest, then) {
-    if (!self || !dest) return;
+    if (!self || !dest || downed) return;
     if (keyWalk.isHeld()) return;
     if (then) chaseWalk = false;
     pendingAfterWalk = then || null;
-    if ((dest.x | 0) === self.x && (dest.y | 0) === self.y) {
+    if (MinimapPath && typeof MinimapPath.clickPlan === 'function') {
+        const plan = MinimapPath.clickPlan(self, dest);
+        if (plan.type === 'text') {
+            pendingAfterWalk = null;
+            fct(plan.text);
+            return;
+        }
+        if (plan.type === 'arrive') {
+            stopWalk(true);
+            runPending();
+            return;
+        }
+    } else if ((dest.x | 0) === self.x && (dest.y | 0) === self.y) {
         stopWalk(true);
         runPending();
         return;
     }
-    if (!isWalkable(dest.x, dest.y)) {
+    if (!routeWalkable(dest.x, dest.y)) {
         pendingAfterWalk = null;
         fct('There is no way.');
         return;
@@ -3590,7 +3827,7 @@ function talkTo(id) {
         send(C2S.TALK, u32buf(id));
         return;
     }
-    const dest = Path.nearestApproach(self, npc, Mouse.TALK_NPC_RANGE, isWalkable);
+    const dest = approachTile(self, npc, Mouse.TALK_NPC_RANGE);
     if (!dest) {
         fct('There is no way.');
         return;
@@ -3605,7 +3842,7 @@ function openCorpseAt(id) {
         send(C2S.OPEN_CORPSE, u32buf(id));
         return;
     }
-    const dest = Path.nearestApproach(self, c, Mouse.OPEN_CORPSE_RANGE, isWalkable);
+    const dest = approachTile(self, c, Mouse.OPEN_CORPSE_RANGE);
     if (!dest) {
         fct('There is no way.');
         return;
@@ -3620,7 +3857,7 @@ function usePinAt(tile, type) {
         send(C2S.USE, encodeTileUse(tile.x, tile.y, tile.z));
         return;
     }
-    const dest = Path.nearestApproach(self, tile, Mouse.WORLD_USE_RANGE, isWalkable);
+    const dest = approachTile(self, tile, Mouse.WORLD_USE_RANGE);
     if (!dest) {
         fct('There is no way.');
         return;
@@ -3723,12 +3960,18 @@ function itemPopoverHtml(itemId, stackCount) {
         const kind = meta.category || meta.weaponType || meta.type || meta.slot;
         if (kind) addRow('Type', kind);
         if (meta.slot) addRow('Slot', meta.slot);
-        if (meta.atk != null && meta.atk > 0) addRow('Atk', meta.atk);
-        if (meta.defense != null && meta.defense > 0) addRow('Def', meta.defense);
+        const atkText = weaponAtkText(meta);
+        const defText = weaponDefText(meta);
+        if (atkText) addRow('Atk', atkText);
+        if (defText) addRow('Def', defText);
         if (meta.armor != null && meta.armor > 0) addRow('Arm', meta.armor);
         if (meta.range != null && meta.range > 1) addRow('Range', meta.range);
         if (meta.twoHanded || meta.hands === 2) addRow('Hands', 'Two-handed');
         if (meta.weight != null && meta.weight > 0) addRow('Weight', (meta.weight / 100).toFixed(2) + ' oz');
+        if (typeof EngineEquipRules !== 'undefined' && EngineEquipRules.wieldSentence) {
+            const wield = EngineEquipRules.wieldSentence(meta);
+            if (wield) addRow('Wield', wield);
+        }
     }
     return '<div class="eq-modal-thumb"><img src="' + escapeHtml(src || '') + '" alt=""></div>'
         + '<div class="eq-modal-title">' + escapeHtml(label) + '</div>'
@@ -3850,8 +4093,8 @@ function ensureBrowse() {
     if (browseUi || !BrowseField) return browseUi;
     browseUi = BrowseField.attach({
         getPlayer: function () { return self; },
-        nearestApproach: function (player, tile, range, walkable) {
-            return Path.nearestApproach(player, tile, range, walkable);
+        nearestApproach: function (player, tile, range) {
+            return approachTile(player, tile, range);
         },
         isWalkable: isWalkable,
         sendBrowse: function (x, y, z) {
@@ -3967,7 +4210,9 @@ function showInvMenu(clientX, clientY, item, containerId, index) {
         {
             label: 'Equip',
             fn: function () {
-                if (containerId != null) send(C2S.EQUIP, encodeEquip(containerId, index, ''));
+                if (containerId == null) return;
+                if (blockDress(item, '', 'equip', '')) return;
+                send(C2S.EQUIP, encodeEquip(containerId, index, ''));
             }
         }
     ];
@@ -4382,7 +4627,12 @@ function onFrame(bytes, tokenHex) {
         const originX = r.i16(), originY = r.i16(), z = r.i8(), w = r.u8(), h = r.u8();
         const tiles = [];
         for (let i = 0; i < w * h; i++) tiles.push(r.u16());
+        if (r.rest().length >= 2) {
+            self.foodSeconds = r.u16();
+            self.foodSyncMs = nowMs();
+        }
         viewport = { originX: originX, originY: originY, z: z, width: w, height: h, tiles: tiles };
+        noteMinimapWindow();
         downed = false;
         setDeath(false);
         log('in world as ' + self.name, 'ok');
@@ -4403,6 +4653,7 @@ function onFrame(bytes, tokenHex) {
         const tiles = [];
         for (let i = 0; i < w * h; i++) tiles.push(r.u16());
         viewport = { originX: originX, originY: originY, z: z, width: w, height: h, tiles: tiles };
+        noteMinimapWindow();
         setHud();
         draw();
         return;
@@ -4415,15 +4666,24 @@ function onFrame(bytes, tokenHex) {
             if (browseUi) browseUi.onPlayerMoved(prev, self);
             applyDirFacing(self, dir);
             setHud();
+            syncMinimapView();
             walkBusy = false;
             if (keyWalk.isHeld()) pumpKeyboardWalk(nowMs());
             else if (walkDest) {
-                if (self.x === walkDest.x && self.y === walkDest.y) {
+                const arrived = (self.x | 0) === (walkDest.x | 0) && (self.y | 0) === (walkDest.y | 0);
+                const sameFloor = (z | 0) === (prev.z | 0);
+                const decision = walkStepDecision(walkLeft, arrived, sameFloor);
+                if (decision === 'arrive') {
                     stopWalk(true, true);
                     runPending();
-                } else if ((z | 0) !== prev.z) {
+                } else if (decision === 'cancel-floor') {
                     stopWalk(false, true);
                     pumpChase();
+                } else if (decision === 'continue') {
+                    walkLeft = 0;
+                    sendNextStep();
+                } else if (walkLeft > 0) {
+                    walkLeft -= 1;
                 }
             } else pumpChase();
         } else {
@@ -4505,11 +4765,18 @@ function onFrame(bytes, tokenHex) {
         return;
     }
     if (opcode === S2C.STATS) {
-        const id = r.u32(), hp = r.u32(), hpMax = r.u32(), mp = r.u32(), mpMax = r.u32();
+        const st = typeof decodeStats === 'function' ? decodeStats(r.rest()) : null;
+        if (!st) return;
+        const id = st.id, hp = st.hp, hpMax = st.hpMax;
         if (self && id === self.id) {
-            self.hp = hp; self.hpMax = hpMax; self.mp = mp; self.mpMax = mpMax;
+            self.hp = hp; self.hpMax = hpMax; self.mp = st.mp; self.mpMax = st.mpMax;
+            self.foodSeconds = st.foodSeconds;
+            self.foodSyncMs = nowMs();
+            self.inProtectionZone = !!st.inProtectionZone;
+            self.conditions = st.conditions;
             if (hp > 0 && downed) setDeath(false);
             setHud();
+            renderFoodStatus();
         } else {
             const p = others.get(id);
             if (p) { p.hp = hp; p.hpMax = hpMax; }
@@ -4936,6 +5203,7 @@ if (typeof window !== 'undefined') {
 }
 
 function leaveWorld() {
+    flushMinimap();
     setSessionBadge('LEAVING');
     if (pingTimer) {
         clearInterval(pingTimer);
@@ -4970,6 +5238,7 @@ function connect(cfg, tokenHex) {
         EngineClientWindow.syncCharacter(null);
     }
     viewport = null;
+    syncMinimapView();
     visualLoader.reset();
     if (tilemapCache) tilemapCache.invalidate();
     if (CombatFx) CombatFx.clear();
@@ -4983,6 +5252,7 @@ function connect(cfg, tokenHex) {
         onFrame(new Uint8Array(ev.data), tokenHex);
     };
     ws.onclose = function (ev) {
+        flushMinimap();
         setSessionBadge('OFFLINE');
         log('disconnected ' + ev.code, ev.code === 1000 || ev.code === 4016 ? 'ok' : 'err');
     };
@@ -5015,6 +5285,7 @@ function tickFps(now) {
         const el = $('stat-fps');
         if (el) el.textContent = String(fps);
     }
+    renderFoodStatus();
     draw();
     pumpKeyboardWalk(now);
     requestAnimationFrame(tickFps);
@@ -5630,6 +5901,10 @@ document.addEventListener('DOMContentLoaded', function () {
     initFloatPanelDrag('npc-shop');
     initFloatPanelDrag('loot-panel');
     initSidebarPanels();
+    if (MinimapView && typeof MinimapView.mount === 'function') {
+        MinimapView.mount(document);
+        if (typeof MinimapView.setTileClick === 'function') MinimapView.setTileClick(onMinimapClick);
+    }
     renderEquipment();
     loadItemCatalog();
     loadVocationSprites();

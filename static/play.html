@@ -120,6 +120,23 @@
     </main>
     <aside class="game-inventory-panel play-inventory" aria-label="Equipment and backpack">
         <div class="am-sidebar-body">
+            <section class="play-minimap" aria-label="Minimap">
+                <div class="play-minimap-bar">
+                    <button type="button" class="play-minimap-btn" id="minimapZoomIn" aria-label="Zoom in" title="Zoom in">+</button>
+                    <button type="button" class="play-minimap-btn" id="minimapZoomOut" aria-label="Zoom out" title="Zoom out">-</button>
+                    <span id="minimapFloor" class="play-minimap-floor">—</span>
+                    <button type="button" class="play-minimap-btn" id="minimapFloorUp" aria-label="Floor up" title="Floor up">
+                        <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
+                    </button>
+                    <button type="button" class="play-minimap-btn" id="minimapFloorDown" aria-label="Floor down" title="Floor down">
+                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                    </button>
+                    <button type="button" class="play-minimap-btn" id="minimapCenter" aria-label="Center on player" title="Center">
+                        <i class="fa-solid fa-crosshairs" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <canvas id="minimap" class="play-minimap-canvas" width="180" height="140" aria-label="Minimap preview"></canvas>
+            </section>
             <section class="game-equipment-panel" aria-label="Equipment">
                 <div class="am-sidebar-title-row panel-title-row">
                     <h2 class="am-sidebar-title mb-0">Equipment</h2>
@@ -330,8 +347,13 @@
 <script src="/js/client_window.js"></script>
 <script src="/js/npc_shop_ui.js"></script>
 <script src="/js/container_drop.js"></script>
+<script src="/js/equip_rules.js"></script>
 <script src="/js/skill_progress.js"></script>
+<script src="/js/status_icons.js"></script>
 <script src="/js/browse_field.js"></script>
+<script src="/js/minimap_store.js"></script>
+<script src="/js/minimap_path.js"></script>
+<script src="/js/minimap_view.js"></script>
 <script src="/js/play.js"></script>
 </body>
 </html>

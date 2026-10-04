@@ -431,14 +431,82 @@ footer {
 }
 
 .play-inventory {
-  width: 185px;
-  min-width: 185px;
-  max-width: 185px;
+  width: 192px;
+  min-width: 192px;
+  max-width: 192px;
   background: var(--bg-dark, #{$bg-dark});
   border-left: 1px solid var(--border-color, #{$border-color});
   overflow-y: auto;
   flex-shrink: 0;
   padding: 6px 6px 12px;
+}
+
+// 180×140 preview plus the 6px padding on each side.
+.play-minimap {
+  width: 180px;
+  max-width: 100%;
+  margin: 0 auto;
+  flex: 0 0 auto;
+}
+
+.play-minimap-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  height: 22px;
+  margin-bottom: 2px;
+}
+
+.play-minimap-floor {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-family: var(--font-mono, #{$font-mono});
+  font-size: 0.65rem;
+  color: var(--text-muted, #{$text-muted});
+}
+
+.play-minimap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted, #{$text-muted});
+  font: 700 0.75rem/1 var(--font-ui, #{$font-ui});
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.play-minimap-canvas {
+  display: block;
+  width: 180px;
+  height: 140px;
+  max-width: 100%;
+  background: #151821;
+  image-rendering: pixelated;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.play-minimap-canvas.is-dragging {
+  cursor: grabbing;
 }
 
 .play-panel {

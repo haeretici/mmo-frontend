@@ -76,6 +76,24 @@ function main() {
         const se = require(serverPath);
         assert.deepStrictEqual({ ...fe.C2S }, { ...se.C2S });
         assert.deepStrictEqual({ ...fe.S2C }, { ...se.S2C });
+        assert.deepStrictEqual([...fe.STATUS_KIND_NAMES], [...se.STATUS_KIND_NAMES]);
+        assert.strictEqual(fe.ZONE_FLAG_PZ, se.ZONE_FLAG_PZ);
+        const messages = require('../../server/src/protocol/messages');
+        const encoded = messages.encodeStats({
+            id: 7,
+            hp: 10,
+            hpMax: 20,
+            mp: 3,
+            mpMax: 4,
+            foodSeconds: 12,
+            inProtectionZone: true,
+            conditions: [{ kind: 'fire' }, { kind: 'poison' }]
+        });
+        const decoded = fe.decodeStats(encoded);
+        assert.strictEqual(decoded.id, 7);
+        assert.strictEqual(decoded.foodSeconds, 12);
+        assert.strictEqual(decoded.inProtectionZone, true);
+        assert.deepStrictEqual(decoded.conditions.map((c) => c.kind), ['fire', 'poison']);
         for (const k of Object.keys(fe.REASON)) {
             assert.strictEqual(fe.REASON[k], se.REASON[k], k);
         }
@@ -83,7 +101,6 @@ function main() {
         assert.strictEqual(fe.LOC_KIND.CONTAINER, se.LOC_KIND.CONTAINER);
         assert.strictEqual(fe.LOC_KIND.EQUIPMENT, se.LOC_KIND.EQUIPMENT);
         assert.strictEqual(fe.LOC_KIND.TILE, se.LOC_KIND.TILE);
-        const messages = require(path.join(__dirname, '../../server/src/protocol/messages.js'));
         assert.strictEqual(fe.SWING_ELEMENT.FIRE, se.SWING_ELEMENT.FIRE);
         assert.strictEqual(fe.swingElementName(se.SWING_ELEMENT.FIRE), 'fire');
         const look = messages.decodeAppear(messages.encodeAppear({
